@@ -35,11 +35,11 @@ var (
 		Pid:              os.Getpid(),
 		Platform:         fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
 		GoVersion:        runtime.Version(),
-		CurrentDiskSpace: getDir(),
+		CurrentDiskSpace: GetDir(),
 	}
 )
 
-func getDir() string {
+func GetDir() string {
 	currentPath, _ := os.Getwd()
 	usage, err := disk.Usage(currentPath)
 	if err != nil {
