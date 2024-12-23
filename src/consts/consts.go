@@ -44,7 +44,7 @@ func getDir() string {
 	usage, err := disk.Usage(currentPath)
 	if err != nil {
 		// fmt.Println("Error:", err)
-		return ("err")
+		return "err: " + err.Error()
 	}
 	// 输出硬盘使用情况
 	// 将字节转换为 GB
@@ -55,7 +55,7 @@ func getDir() string {
 	// 输出硬盘使用情况
 	// fmt.Printf("Total: %.2f GB\n", totalGB)
 	// fmt.Printf("Used: %.2f GB\n", usedGB)
-	result := fmt.Sprintf("剩余空间: %.2f GB\n", freeGB)
+	result := fmt.Sprintf("%.2f GB", freeGB)
 	// fmt.Printf("Used Percent: %.2f%%\n", usage.UsedPercent)
 	return result
 }
