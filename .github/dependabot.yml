@@ -19,3 +19,5 @@ updates:
       angular:
         # Group security updates for Angular dependencies into a single pull request
         applies-to: security-updates
+        patterns:
+          - "@angular*"
