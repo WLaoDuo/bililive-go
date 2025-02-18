@@ -5,7 +5,12 @@
 
 version: 2
 updates:
-  - package-ecosystem: "gomod,npm" # See documentation for possible values
+  - package-ecosystem: "gomod" #https://docs.github.com/zh/code-security/dependabot/dependabot-security-updates/customizing-dependabot-security-prs
+    target-branch: "release"
+    directory: "/" # Location of package manifests
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
     target-branch: "release"
     directory: "/" # Location of package manifests
     schedule:
