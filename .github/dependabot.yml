@@ -12,6 +12,6 @@ updates:
       interval: "weekly"
   - package-ecosystem: "npm"
     target-branch: "release"
-    directory: "/" # Location of package manifests
+    directory: "/src/webapp" # Location of package manifests
     schedule:
       interval: "weekly"
