@@ -1,24 +1,67 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
-	"net"
 	"net/url"
 	"reflect"
 	"regexp"
-	"strconv"
 
+	"github.com/hr3lxphr6j/bililive-go/src/live"
 	"github.com/parnurzeal/gorequest"
 	"github.com/tidwall/gjson"
 )
 
-func get_modelId(modleName string, daili string) string {
+// func get_M3u8(modelId string, daili string) (string, string) {
+// 	// fmt.Println(modelId)
+// 	// url := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=lowLatency"
+// 	// url := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + "_auto.m3u8" //可选分辨率视频，比原视频糊
+// 	// url := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + ".m3u8?playlistType=lowLatency"
+// 	url := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + ".m3u8" //源视频，最高分辨率
+// 	request := gorequest.New()
+// 	if daili != "" {
+// 		request = request.Proxy(daili) //代理
+// 	}
+// 	resp, body, errs := request.Get(url).End()
 
-	fmt.Println("主播名字：", modleName)
+// 	if modelId == "false" || modelId == "OffLine" || modelId == "url.Error" || resp.StatusCode != 200 || len(errs) > 0 {
+// 		return "false", "false"
+// 	} else {
+// 		fmt.Println((body))
+// 		re0 := regexp.MustCompile(`BANDWIDTH=([\d]+)`)
+// 		BANDWIDTH := re0.FindStringSubmatch(body)
+// 		bandwidthValue := "10M"
+// 		bandwidthValue1 := 0
+// 		if len(BANDWIDTH) == 2 {
+// 			bandwidthValue1, _ = strconv.Atoi(BANDWIDTH[1]) // 提取括号内的内容
+// 			bandwidthValue = strconv.Itoa(bandwidthValue1 * 5)
+// 		}
+// 		fmt.Println("码率:", bandwidthValue)
+// 		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=lowLatency)`)
+// 		re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8)`)
+// 		url := re.FindString(body)
+
+//			return url, bandwidthValue
+//		}
+//	}
+var (
+	ErrFalse                     = errors.New("false")
+	ErrModelName                 = errors.New("err model name")
+	Err_GetInfo_Unexpected       = errors.New("GetInfo未知错误")
+	Err_GetStreamUrls_Unexpected = errors.New("GetStreamUrls未知错误")
+	Err_TestUrl_Unexpected       = errors.New("testUrl未知错误")
+	ErrOffline                   = errors.New("OffLine")
+	// ErrNullUrl                   = errors.New("no url")
+)
+
+func get_modelId(modleName string, daili string) (string, error) {
+	if modleName == "" {
+		return "", ErrFalse
+	}
 	request := gorequest.New()
 	if daili != "" {
-		request = request.Proxy(daili)
+		request = request.Proxy(daili) //代理
 	}
 
 	// 添加头部信息
@@ -42,86 +85,89 @@ func get_modelId(modleName string, daili string) string {
 	if errs != nil {
 		fmt.Println("get_modeId出错详情:")
 		for _, err := range errs {
-			if err1, ok := err.(*url.Error); ok {
-				// urlErr 是 *url.Error 类型的错误
-				fmt.Println("请求出错,可能网络故障", errs)
-				// fmt.Println("*url.Error 类型的错误")
-				if err2, ok := err1.Err.(*net.OpError); ok {
-					// netErr 是 *net.OpError 类型的错误
-					// 可以进一步判断 netErr.Err 的类型
-					fmt.Println("*net.OpError 类型的错误", err.Error(), err2.Op)
-				}
-				return "url.Error"
+			if _, ok := err.(*url.Error); ok {
+				return "", live.ErrInternalError
 			} else {
 				fmt.Println(reflect.TypeOf(err), "错误详情:", err)
 			}
 		}
-		return "false"
+		return "", ErrFalse
 	} else {
 		// 解析 JSON 响应
 		if len(gjson.Get(body, "messages").String()) > 2 {
 			modelId := gjson.Get(body, "messages.0.modelId").String()
-			return modelId
+			return modelId, nil
 		} else if len(gjson.Get(body, "messages").String()) == 2 {
-			fmt.Println("offline")
-			return "OffLine"
+			return "", ErrOffline
 		} else if len(gjson.Get(body, "messages").String()) == 0 {
-			fmt.Println("error name")
-			return "false"
+			return "", ErrModelName
 		}
-		fmt.Println("len messages=", len(gjson.Get(body, "messages").String()), "\nmessages:", gjson.Get(body, "messages").String())
-		return "false"
+		return "", ErrFalse
 	}
 }
 
-func get_M3u8(modelId string, daili string) (string, string) {
-	// fmt.Println(modelId)
+func get_M3u8(modelId string, daili string) (string, error) {
+	if modelId == "" { // || modelId == "false" || modelId == "OffLine" || modelId == "url.Error" {
+		return "", ErrFalse
+	}
 	// url := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=lowLatency"
-	// url := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + "_auto.m3u8" //可选分辨率视频，比原视频糊
-	// url := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + ".m3u8?playlistType=lowLatency"
-	url := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + ".m3u8" //源视频，最高分辨率
+	urlinput := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=standard"
+	// url := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + ".m3u8"
 	request := gorequest.New()
 	if daili != "" {
 		request = request.Proxy(daili) //代理
 	}
-	resp, body, errs := request.Get(url).End()
-
-	if modelId == "false" || modelId == "OffLine" || modelId == "url.Error" || resp.StatusCode != 200 || len(errs) > 0 {
-		return "false", "false"
-	} else {
-		fmt.Println((body))
-		re0 := regexp.MustCompile(`BANDWIDTH=([\d]+)`)
-		BANDWIDTH := re0.FindStringSubmatch(body)
-		bandwidthValue := "10M"
-		bandwidthValue1 := 0
-		if len(BANDWIDTH) == 2 {
-			bandwidthValue1, _ = strconv.Atoi(BANDWIDTH[1]) // 提取括号内的内容
-			bandwidthValue = strconv.Itoa(bandwidthValue1 * 5)
+	resp, body, errs := request.Get(urlinput).End()
+	if errs != nil {
+		for _, err := range errs {
+			if _, ok := err.(*url.Error); ok {
+				return "", live.ErrInternalError
+			}
 		}
-		fmt.Println("码率:", bandwidthValue)
-		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=lowLatency)`)
-		re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8)`)
-		url := re.FindString(body)
-
-		return url, bandwidthValue
+		return "", ErrFalse
 	}
-}
-func test_m3u8(url string, daili string) bool {
-	request := gorequest.New()
-	if daili != "" {
-		request = request.Proxy(daili) //代理
-	}
-	resp, body, errs := request.Get(url).End()
-	if url == "false" || len(errs) > 0 || resp.StatusCode != 200 {
-		return false
+	if resp.StatusCode == 404 || resp.StatusCode == 403 {
+		return "", ErrOffline
 	}
 	if resp.StatusCode == 200 {
-		_ = body
-		// fmt.Println(body)
-		return true
+		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=lowLatency)`)
+		re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=standard)`) //等价于\?playlistType=standard
+		matches := re.FindString(body)
+		return matches, nil
+	} else {
+		return "", ErrFalse
 	}
-
-	return false
+}
+func test_m3u8(urlinput string, daili string) (bool, error) {
+	if urlinput == "" {
+		return false, ErrFalse
+	} else {
+		request := gorequest.New()
+		if daili != "" {
+			request = request.Proxy(daili) //代理
+		}
+		resp, body, errs := request.Get(urlinput).End()
+		if errs != nil {
+			for _, err := range errs {
+				if _, ok := err.(*url.Error); ok {
+					return false, live.ErrInternalError
+				}
+			}
+			return false, ErrFalse
+		}
+		if resp.StatusCode == 200 {
+			_ = body
+			return true, nil
+		}
+		if resp.StatusCode == 403 { //403代表开票，普通用户无法查看，只能看大厅表演
+			_ = body
+			return false, ErrOffline
+		}
+		if resp.StatusCode != 200 {
+			return false, ErrFalse
+		}
+		return false, Err_TestUrl_Unexpected
+	}
 }
 
 func main() {
@@ -134,8 +180,16 @@ func main() {
 	// m3u8 := get_M3u8(get_modelId("Lucky-uu"))
 	// m3u8 := get_M3u8(get_modelId("Hahaha_ha2"))
 	// m3u8 := get_M3u8(get_modelId("8-Monica"))
-	m3u8, bandwidth := get_M3u8(get_modelId(*name, *daili), *daili)
-	fmt.Println("m3u8=", m3u8, "测试结果：", test_m3u8(m3u8, *daili))
-	fmt.Println("ffmpeg.exe -http_proxy ", *daili, " -copyts -progress - -y -i ", m3u8, " -c copy -rtbufsize ", bandwidth, "./ceshi_copyts.mkv")
+	fmt.Println("input=", *name)
+	modelID, err_getid := get_modelId(*name, *daili)
+	m3u8, err_getm3u8 := get_M3u8(modelID, *daili)
+	result, err_test := test_m3u8(m3u8, *daili)
+	if modelID != "" {
+		if err_getm3u8 == nil && err_test == nil && err_getid == nil {
+			fmt.Println("m3u8=", m3u8, "测试结果：", result)
+			fmt.Println("ffmpeg.exe -http_proxy ", *daili, " -copyts -progress - -y -i ", m3u8, " -c copy -rtbufsize ", "./ceshi_copyts.mkv")
+		}
+	}
+	fmt.Println("err_getid=", err_getid, "\nerr_getm3u8=", err_getm3u8, "\nerr_test=", err_test)
 
 }

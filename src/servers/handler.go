@@ -357,7 +357,9 @@ func applyLiveRoomsByConfig(ctx context.Context, newLiveRooms []configs.LiveRoom
 }
 
 func getInfo(writer http.ResponseWriter, r *http.Request) {
-	writeJSON(writer, consts.AppInfo)
+	appinfo := consts.AppInfo
+	appinfo.CurrentDiskSpace = consts.GetDir()
+	writeJSON(writer, appinfo)
 }
 
 func getFileInfo(writer http.ResponseWriter, r *http.Request) {
