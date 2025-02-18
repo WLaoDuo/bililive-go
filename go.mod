@@ -27,7 +27,7 @@ require (
 	github.com/sirupsen/logrus v1.8.1
 	github.com/smartystreets/goconvey v1.8.1 // indirect
 	github.com/stretchr/testify v1.10.0
-	github.com/tidwall/gjson v1.9.3
+	github.com/tidwall/gjson v1.18.0
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	gopkg.in/sourcemap.v1 v1.0.5 // indirect
 	gopkg.in/yaml.v2 v2.4.0
