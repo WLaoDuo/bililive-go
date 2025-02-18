@@ -11,7 +11,7 @@ require (
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/elazarl/goproxy v1.7.0 // indirect
 	github.com/golang/mock v1.6.0
-	github.com/gorilla/mux v1.7.4
+	github.com/gorilla/mux v1.8.1
 	github.com/hr3lxphr6j/requests v0.0.1
 	github.com/huandu/xstrings v1.3.2 // indirect
 	github.com/imdario/mergo v0.3.11 // indirect
