@@ -24,7 +24,7 @@ require (
 	github.com/robertkrimen/otto v0.0.0-20191219234010-c382bd3c16ff
 	github.com/satori/go.uuid v1.2.1-0.20181028125025-b2ce2384e17b
 	github.com/shirou/gopsutil v3.21.11+incompatible
-	github.com/sirupsen/logrus v1.8.1
+	github.com/sirupsen/logrus v1.9.3
 	github.com/smartystreets/goconvey v1.8.1 // indirect
 	github.com/stretchr/testify v1.10.0
 	github.com/tidwall/gjson v1.18.0
