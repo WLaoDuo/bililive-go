@@ -178,16 +178,17 @@ type MultiError struct {
 
 func (e MultiError) Error() string {
 	var errors []string
-	if e.ErrTestM3U8 != nil {
-		errors = append(errors, "ErrTestM3U8: "+e.ErrTestM3U8.Error())
-	}
 	if e.ErrGetID != nil {
 		errors = append(errors, "ErrGetID: "+e.ErrGetID.Error())
 	}
 	if e.ErrGetM3U8 != nil {
 		errors = append(errors, "ErrGetM3U8: "+e.ErrGetM3U8.Error())
 	}
-	
+	if e.ErrTestM3U8 != nil {
+		errors = append(errors, "ErrTestM3U8: "+e.ErrTestM3U8.Error())
+	}
+	return strings.Join(errors, "; ")
+}
 
 func (l *Live) GetInfo() (info *live.Info, err error) {
 	modeName := strings.Split(l.Url.String(), "/")
