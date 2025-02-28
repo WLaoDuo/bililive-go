@@ -108,7 +108,8 @@ func get_M3u8(modelId string, daili string) (string, error) {
 	}
 	if resp.StatusCode == 200 {
 		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=lowLatency)`)
-		re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=standard)`) //等价于\?playlistType=standard
+		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=standard)`) //等价于\?playlistType=standard
+		re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/[\w\/-]+.m3u8\?playlistType=standard)`) //等价于\?playlistType=standard
 		matches := re.FindString(body)
 		return matches, nil
 	} else {
@@ -238,6 +239,7 @@ func (l *Live) GetStreamUrls() (us []*url.URL, err error) {
 	// fmt.Println("\n l.m3u8Url=", l.m3u8Url, " l.GetLiveId()", string(l.GetLiveId()))
 	m3u8_status, err_testm3u8 := test_m3u8(m3u8, daili)
 	if m3u8_status {
+		l.m3u8Url = m3u8
 		return utils.GenUrls(m3u8)
 	}
 
