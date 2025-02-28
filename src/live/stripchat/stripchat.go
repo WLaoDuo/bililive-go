@@ -170,14 +170,31 @@ func (b *builder) Build(url *url.URL, opt ...live.Option) (live.Live, error) {
 	}, nil
 }
 
+type MultiError struct {
+	ErrTestM3U8 error
+	ErrGetID    error
+	ErrGetM3U8  error
+}
+
+func (e MultiError) Error() string {
+	var errors []string
+	if e.ErrTestM3U8 != nil {
+		errors = append(errors, "ErrTestM3U8: "+e.ErrTestM3U8.Error())
+	}
+	if e.ErrGetID != nil {
+		errors = append(errors, "ErrGetID: "+e.ErrGetID.Error())
+	}
+	if e.ErrGetM3U8 != nil {
+		errors = append(errors, "ErrGetM3U8: "+e.ErrGetM3U8.Error())
+	}
+	
+
 func (l *Live) GetInfo() (info *live.Info, err error) {
 	modeName := strings.Split(l.Url.String(), "/")
 	modelName := modeName[len(modeName)-1]
 	daili := ""
 	config, config_err := readconfig.Get_config()
-	if config_err != nil {
-		daili = ""
-	} else {
+	if config_err == nil {
 		daili = config.Proxy
 	}
 
@@ -212,7 +229,11 @@ func (l *Live) GetInfo() (info *live.Info, err error) {
 	if errors.Is(err_testm3u8, live.ErrInternalError) || errors.Is(err_getid, live.ErrInternalError) || errors.Is(err_getm3u8, live.ErrInternalError) {
 		return nil, live.ErrInternalError
 	}
-	return nil, Err_GetInfo_Unexpected
+	return nil, MultiError{
+		ErrTestM3U8: err_testm3u8,
+		ErrGetID:    err_getid,
+		ErrGetM3U8:  err_getm3u8,
+	}
 }
 
 func (l *Live) GetStreamUrls() (us []*url.URL, err error) {
@@ -221,12 +242,15 @@ func (l *Live) GetStreamUrls() (us []*url.URL, err error) {
 	daili := ""
 	m3u8 := ""
 	config, config_err := readconfig.Get_config()
-	if config_err != nil {
-		daili = ""
-	} else {
+	if config_err == nil {
 		daili = config.Proxy
 	}
+
 	modelID, err := get_modelId(modelName, daili)
+	if err != nil {
+		return nil, err
+	}
+
 	if l.m3u8Url == "" {
 		m3u8, err = get_M3u8(modelID, daili)
 	} else {
