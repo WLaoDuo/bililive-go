@@ -130,10 +130,21 @@ func get_M3u8(modelId string, daili string) (string, error) {
 		return "", ErrOffline
 	}
 	if resp.StatusCode == 200 {
+		// fmt.Println(resp)
 		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=lowLatency)`)
-		re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=standard)`) //等价于\?playlistType=standard
-		matches := re.FindString(body)
-		return matches, nil
+		re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/[\w\/-]+.m3u8\?playlistType=standard)`) //等价于\?playlistType=standard
+		matches := re.FindAllString(body, -1)
+		if len(matches) > 1 {
+			// 获取第二个匹配结果
+			secondMatch := matches[1]
+			// fmt.Println("第二个匹配结果:", secondMatch) // -1 表示匹配所有结果
+			return secondMatch, nil
+		}
+		if len(matches) == 1 {
+			return matches[0], nil
+		} else {
+			return "", errors.New("未找到足够的匹配结果")
+		}
 	} else {
 		return "", ErrFalse
 	}
@@ -190,6 +201,7 @@ func main() {
 			fmt.Println("ffmpeg.exe -http_proxy ", *daili, " -copyts -progress - -y -i ", m3u8, " -c copy -rtbufsize ", "./ceshi_copyts.mkv")
 		}
 	}
-	fmt.Println("err_getid=", err_getid, "\nerr_getm3u8=", err_getm3u8, "\nerr_test=", err_test)
-
+	if err_getid != nil || err_getm3u8 != nil || err_test != nil {
+		fmt.Println("err_getid=", err_getid, "\nerr_getm3u8=", err_getm3u8, "\nerr_test=", err_test)
+	}
 }
