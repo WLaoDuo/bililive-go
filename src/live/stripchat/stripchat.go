@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/hr3lxphr6j/bililive-go/src/cmd/bililive/readconfig"
@@ -23,12 +24,13 @@ var (
 	Err_GetStreamUrls_Unexpected = errors.New("GetStreamUrls未知错误")
 	Err_TestUrl_Unexpected       = errors.New("testUrl未知错误")
 	ErrOffline                   = errors.New("OffLine")
-	// ErrNullUrl                   = errors.New("no url")
+	ErrNullUrl                   = errors.New("no url")
+	ErrNullID                    = errors.New("null ID")
 )
 
 func get_modelId(modleName string, daili string) (string, error) {
 	if modleName == "" {
-		return "", ErrFalse
+		return "", ErrModelName
 	}
 	request := gorequest.New()
 	if daili != "" {
@@ -66,6 +68,7 @@ func get_modelId(modleName string, daili string) (string, error) {
 				return "", live.ErrInternalError
 			} else {
 				fmt.Println(reflect.TypeOf(err), "错误详情:", err)
+				return "", err
 			}
 		}
 		return "", ErrFalse
@@ -85,7 +88,7 @@ func get_modelId(modleName string, daili string) (string, error) {
 
 func get_M3u8(modelId string, daili string) (string, error) {
 	if modelId == "" { // || modelId == "false" || modelId == "OffLine" || modelId == "url.Error" {
-		return "", ErrFalse
+		return "", ErrNullID
 	}
 	// url := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=lowLatency"
 	urlinput := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=standard"
@@ -126,7 +129,7 @@ func get_M3u8(modelId string, daili string) (string, error) {
 }
 func test_m3u8(urlinput string, daili string) (bool, error) {
 	if urlinput == "" {
-		return false, ErrFalse
+		return false, ErrNullUrl
 	} else {
 		request := gorequest.New()
 		if daili != "" {
@@ -150,7 +153,7 @@ func test_m3u8(urlinput string, daili string) (bool, error) {
 			return false, ErrOffline
 		}
 		if resp.StatusCode != 200 {
-			return false, ErrFalse
+			return false, errors.New(strconv.Itoa(resp.StatusCode))
 		}
 		return false, Err_TestUrl_Unexpected
 	}
@@ -217,7 +220,10 @@ func (l *Live) GetInfo() (info *live.Info, err error) {
 	m3u8_status, err_testm3u8 := test_m3u8(m3u8, daili)
 
 	if m3u8_status { //strings.Contains(m3u8, ".m3u8")
-		l.m3u8Url = m3u8
+		if l.m3u8Url != m3u8 {
+			l.m3u8Url = m3u8
+		}
+
 		info = &live.Info{
 			Live:         l,
 			RoomName:     modelID,
@@ -256,23 +262,24 @@ func (l *Live) GetStreamUrls() (us []*url.URL, err error) {
 		daili = config.Proxy
 	}
 
-	modelID, err := get_modelId(modelName, daili)
-	if err != nil {
-		return nil, err
-	}
-
 	if l.m3u8Url == "" {
+		modelID, err := get_modelId(modelName, daili)
+		if err != nil {
+			return nil, err
+		}
 		m3u8, err = get_M3u8(modelID, daili)
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		m3u8 = l.m3u8Url
 	}
-	if errors.Is(err, live.ErrInternalError) || errors.Is(err, ErrOffline) {
-		return nil, live.ErrInternalError
-	}
-	// fmt.Println("\n l.m3u8Url=", l.m3u8Url, " l.GetLiveId()", string(l.GetLiveId()))
+
 	m3u8_status, err_testm3u8 := test_m3u8(m3u8, daili)
 	if m3u8_status {
-		l.m3u8Url = m3u8
+		if l.m3u8Url != m3u8 {
+			l.m3u8Url = m3u8
+		}
 		return utils.GenUrls(m3u8)
 	}
 
