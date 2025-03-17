@@ -80,9 +80,9 @@ func get_modelId(modleName string, daili string) (string, error) {
 
 	// 发起 GET 请求
 	_, body, errs := request.Get("https://zh.stripchat.com/api/front/v2/models/username/" + modleName + "/chat").End()
-
+	_, body2, errs2 := request.Get("https://zh.stripchat.com/api/front/models/username/" + modleName + "/knights").End()
 	// 处理响应
-	if errs != nil {
+	if errs != nil || errs2 != nil {
 		fmt.Println("get_modeId出错详情:")
 		for _, err := range errs {
 			if _, ok := err.(*url.Error); ok {
@@ -93,6 +93,10 @@ func get_modelId(modleName string, daili string) (string, error) {
 		}
 		return "", ErrFalse
 	} else {
+		// fmt.Println("id=", body2) //gjson.Get(body2, "modelId").String())
+		if gjson.Get(body2, "modelId").String() != "" {
+			return gjson.Get(body2, "modelId").String(), nil
+		}
 		// 解析 JSON 响应
 		if len(gjson.Get(body, "messages").String()) > 2 {
 			modelId := gjson.Get(body, "messages.0.modelId").String()

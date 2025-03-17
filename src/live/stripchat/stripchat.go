@@ -53,9 +53,9 @@ func get_modelId(modleName string, daili string) (string, error) {
 
 	// 发起 GET 请求
 	_, body, errs := request.Get("https://zh.stripchat.com/api/front/v2/models/username/" + modleName + "/chat").End()
-
+	_, body2, errs2 := request.Get("https://zh.stripchat.com/api/front/models/username/" + modleName + "/knights").End() //这个url主播离线也能获取id
 	// 处理响应
-	if errs != nil {
+	if errs != nil || errs2 != nil {
 		for _, err := range errs {
 			if _, ok := err.(*url.Error); ok {
 				// urlErr 是 *url.Error 类型的错误
@@ -73,7 +73,9 @@ func get_modelId(modleName string, daili string) (string, error) {
 		}
 		return "", ErrFalse
 	} else {
-		// 解析 JSON 响应
+		if gjson.Get(body2, "modelId").String() != "" {
+			return gjson.Get(body2, "modelId").String(), nil
+		}
 		if len(gjson.Get(body, "messages").String()) > 2 {
 			modelId := gjson.Get(body, "messages.0.modelId").String()
 			return modelId, nil
