@@ -52,12 +52,13 @@ var (
 	Err_GetStreamUrls_Unexpected = errors.New("GetStreamUrls未知错误")
 	Err_TestUrl_Unexpected       = errors.New("testUrl未知错误")
 	ErrOffline                   = errors.New("OffLine")
-	// ErrNullUrl                   = errors.New("no url")
+	ErrNullUrl                   = errors.New("no url")
+	ErrNullID                    = errors.New("null ID")
 )
 
 func get_modelId(modleName string, daili string) (string, error) {
 	if modleName == "" {
-		return "", ErrFalse
+		return "", ErrModelName
 	}
 	request := gorequest.New()
 	if daili != "" {
@@ -78,26 +79,45 @@ func get_modelId(modleName string, daili string) (string, error) {
 	request.Set("Te", "trailers")
 	request.Set("Connection", "close")
 
-	// 发起 GET 请求
-	_, body, errs := request.Get("https://zh.stripchat.com/api/front/v2/models/username/" + modleName + "/chat").End()
-	_, body2, errs2 := request.Get("https://zh.stripchat.com/api/front/models/username/" + modleName + "/knights").End()
-	// 处理响应
-	if errs != nil || errs2 != nil {
-		fmt.Println("get_modeId出错详情:")
-		for _, err := range errs {
-			if _, ok := err.(*url.Error); ok {
+	//优先此api
+	_, body2, errs2 := request.Get("https://zh.stripchat.com/api/front/models/username/" + modleName + "/knights").End() //这个url主播离线也能获取id
+	if errs2 != nil {
+		for _, err := range errs2 {
+			if urlErr, ok := err.(*url.Error); ok {
+				// 处理网络错误
+				fmt.Println("URL2请求失败(网络错误):", urlErr)
 				return "", live.ErrInternalError
 			} else {
 				fmt.Println(reflect.TypeOf(err), "错误详情:", err)
+				return "", err
+			}
+		}
+		return "", ErrFalse
+	}
+	if body2 != "" && gjson.Get(body2, "modelId").String() != "" {
+		return gjson.Get(body2, "modelId").String(), nil
+	}
+
+	//此api需要等主播上线才可用，适用性差
+	_, body, errs := request.Get("https://zh.stripchat.com/api/front/v2/models/username/" + modleName + "/chat").End()
+	if errs != nil {
+		for _, err := range errs {
+			if _, ok := err.(*url.Error); ok {
+				// urlErr 是 *url.Error 类型的错误
+				// fmt.Println("*url.Error 类型的错误")
+				// if err2, ok := err1.Err.(*net.OpError); ok {
+				// 	// netErr 是 *net.OpError 类型的错误
+				// 	// 可以进一步判断 netErr.Err 的类型
+				// 	fmt.Println("*net.OpError 类型的错误", err.Error(), err2.Op)
+				// }
+				return "", live.ErrInternalError
+			} else {
+				fmt.Println(reflect.TypeOf(err), "错误详情:", err)
+				return "", err
 			}
 		}
 		return "", ErrFalse
 	} else {
-		// fmt.Println("id=", body2) //gjson.Get(body2, "modelId").String())
-		if gjson.Get(body2, "modelId").String() != "" {
-			return gjson.Get(body2, "modelId").String(), nil
-		}
-		// 解析 JSON 响应
 		if len(gjson.Get(body, "messages").String()) > 2 {
 			modelId := gjson.Get(body, "messages.0.modelId").String()
 			return modelId, nil
@@ -112,7 +132,7 @@ func get_modelId(modleName string, daili string) (string, error) {
 
 func get_M3u8(modelId string, daili string) (string, error) {
 	if modelId == "" { // || modelId == "false" || modelId == "OffLine" || modelId == "url.Error" {
-		return "", ErrFalse
+		return "", ErrNullID
 	}
 	// url := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=lowLatency"
 	urlinput := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=standard"
@@ -134,20 +154,18 @@ func get_M3u8(modelId string, daili string) (string, error) {
 		return "", ErrOffline
 	}
 	if resp.StatusCode == 200 {
-		// fmt.Println(resp)
 		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=lowLatency)`)
-		re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/[\w\/-]+.m3u8\?playlistType=standard)`) //等价于\?playlistType=standard
-		matches := re.FindAllString(body, -1)
+		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=standard)`) //等价于\?playlistType=standard
+		re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/[\w\/-]+.m3u8\?playlistType=standard)`) //https://media-hls.doppiocdn.com/b-hls-10/82030055/82030055_720p60.m3u8更新
+		matches := re.FindAllString(body, -1)                                                   // -1表示匹配所有结果
 		if len(matches) > 1 {
-			// 获取第二个匹配结果
 			secondMatch := matches[1]
-			// fmt.Println("第二个匹配结果:", secondMatch) // -1 表示匹配所有结果
 			return secondMatch, nil
 		}
 		if len(matches) == 1 {
 			return matches[0], nil
 		} else {
-			return "", errors.New("未找到足够的匹配结果")
+			return "", errors.New(body + "m3u8正则未匹配")
 		}
 	} else {
 		return "", ErrFalse
@@ -157,6 +175,7 @@ func test_m3u8(urlinput string, daili string) (bool, error) {
 	if urlinput == "" {
 		return false, ErrFalse
 	} else {
+		fmt.Println(urlinput)
 		request := gorequest.New()
 		if daili != "" {
 			request = request.Proxy(daili) //代理
