@@ -51,11 +51,28 @@ func get_modelId(modleName string, daili string) (string, error) {
 	request.Set("Te", "trailers")
 	request.Set("Connection", "close")
 
-	// 发起 GET 请求
-	_, body, errs := request.Get("https://zh.stripchat.com/api/front/v2/models/username/" + modleName + "/chat").End()
+	//优先此api
 	_, body2, errs2 := request.Get("https://zh.stripchat.com/api/front/models/username/" + modleName + "/knights").End() //这个url主播离线也能获取id
-	// 处理响应
-	if errs != nil || errs2 != nil {
+	if errs2 != nil {
+		for _, err := range errs2 {
+			if urlErr, ok := err.(*url.Error); ok {
+				// 处理网络错误
+				fmt.Println("URL2请求失败(网络错误):", urlErr)
+				return "", live.ErrInternalError
+			} else {
+				fmt.Println(reflect.TypeOf(err), "错误详情:", err)
+				return "", err
+			}
+		}
+		return "", ErrFalse
+	}
+	if body2 != "" && gjson.Get(body2, "modelId").String() != "" {
+		return gjson.Get(body2, "modelId").String(), nil
+	}
+
+	//此api需要等主播上线才可用，适用性差
+	_, body, errs := request.Get("https://zh.stripchat.com/api/front/v2/models/username/" + modleName + "/chat").End()
+	if errs != nil {
 		for _, err := range errs {
 			if _, ok := err.(*url.Error); ok {
 				// urlErr 是 *url.Error 类型的错误
@@ -73,9 +90,6 @@ func get_modelId(modleName string, daili string) (string, error) {
 		}
 		return "", ErrFalse
 	} else {
-		if gjson.Get(body2, "modelId").String() != "" {
-			return gjson.Get(body2, "modelId").String(), nil
-		}
 		if len(gjson.Get(body, "messages").String()) > 2 {
 			modelId := gjson.Get(body, "messages.0.modelId").String()
 			return modelId, nil
@@ -123,7 +137,7 @@ func get_M3u8(modelId string, daili string) (string, error) {
 		if len(matches) == 1 {
 			return matches[0], nil
 		} else {
-			return "", errors.New("m3u8正则未匹配")
+			return "", errors.New(body + "m3u8正则未匹配")
 		}
 	} else {
 		return "", ErrFalse
