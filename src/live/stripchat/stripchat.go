@@ -17,6 +17,18 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+func init() {
+	live.Register(domain, new(builder))
+}
+
+type builder struct{}
+
+func (b *builder) Build(url *url.URL, opt ...live.Option) (live.Live, error) {
+	return &Live{
+		BaseLive: internal.NewBaseLive(url, opt...),
+	}, nil
+}
+
 var (
 	ErrFalse                     = errors.New("false")
 	ErrModelName                 = errors.New("err model name")
@@ -109,6 +121,9 @@ func get_M3u8(modelId string, daili string) (string, error) {
 	// url := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=lowLatency"
 	urlinput := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=standard"
 	// url := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + ".m3u8"
+	//https://edge-hls.doppiocdn.com/hls/82030055/master/82030055_auto.m3u8
+	//https://media-hls.doppiocdn.com/b-hls-20/82030055/82030055.m3u8
+	//https://edge-hls.doppiocdn.com/hls/82030055/master/82030055.m3u8
 	request := gorequest.New()
 	if daili != "" {
 		request = request.Proxy(daili) //代理
@@ -182,20 +197,8 @@ const (
 
 type Live struct {
 	internal.BaseLive
-	// liveroom map[string]*configs.LiveRoom
-	m3u8Url string
-}
-
-func init() {
-	live.Register(domain, new(builder))
-}
-
-type builder struct{}
-
-func (b *builder) Build(url *url.URL, opt ...live.Option) (live.Live, error) {
-	return &Live{
-		BaseLive: internal.NewBaseLive(url, opt...),
-	}, nil
+	model_ID string
+	m3u8Url  string
 }
 
 type MultiError struct {
@@ -227,8 +230,22 @@ func (l *Live) GetInfo() (info *live.Info, err error) {
 		daili = config.Proxy
 	}
 
-	modelID, err_getid := get_modelId(modelName, daili)
-	m3u8, err_getm3u8 := get_M3u8(modelID, daili)
+	// 优先使用缓存的 model_ID
+	if l.model_ID == "" {
+		modelID, err_getid := get_modelId(modelName, daili)
+		if errors.Is(err_getid, live.ErrInternalError) {
+			return nil, live.ErrInternalError
+		}
+		if err_getid != nil {
+			if errors.Is(err_getid, live.ErrInternalError) {
+				return nil, live.ErrInternalError
+			}
+			return nil, err_getid
+		}
+		l.model_ID = modelID
+	}
+
+	m3u8, err_getm3u8 := get_M3u8(l.model_ID, daili)
 
 	if m3u8 == "" && l.m3u8Url != "" { //url
 		m3u8 = l.m3u8Url
@@ -237,19 +254,19 @@ func (l *Live) GetInfo() (info *live.Info, err error) {
 
 	if m3u8_status { //strings.Contains(m3u8, ".m3u8")
 		if l.m3u8Url != m3u8 {
-			l.m3u8Url = m3u8
+			l.m3u8Url = m3u8 //l.m3u8Url缓存更新机制
 		}
 
 		info = &live.Info{
 			Live:         l,
-			RoomName:     modelID,
+			RoomName:     l.model_ID,
 			HostName:     modelName,
 			Status:       true,
 			CustomLiveId: m3u8, //l.GetLiveId()可获取持久化数据
 		}
 		return info, nil
 	}
-	if errors.Is(err_testm3u8, ErrOffline) || errors.Is(err_getid, ErrOffline) || errors.Is(err_getm3u8, ErrOffline) {
+	if errors.Is(err_testm3u8, ErrOffline) || errors.Is(err_getm3u8, ErrOffline) {
 		info = &live.Info{
 			Live:     l,
 			RoomName: "OffLine",
@@ -258,45 +275,44 @@ func (l *Live) GetInfo() (info *live.Info, err error) {
 		}
 		return info, nil
 	}
-	if errors.Is(err_testm3u8, live.ErrInternalError) || errors.Is(err_getid, live.ErrInternalError) || errors.Is(err_getm3u8, live.ErrInternalError) {
+	if errors.Is(err_testm3u8, live.ErrInternalError) || errors.Is(err_getm3u8, live.ErrInternalError) {
 		return nil, live.ErrInternalError
 	}
 	return nil, MultiError{
 		ErrTestM3U8: err_testm3u8,
-		ErrGetID:    err_getid,
+		ErrGetID:    nil,
 		ErrGetM3U8:  err_getm3u8,
 	}
 }
 
 func (l *Live) GetStreamUrls() (us []*url.URL, err error) {
+	// l.Options.Quality
 	modeName := strings.Split(l.Url.String(), "/")
 	modelName := modeName[len(modeName)-1]
 	daili := ""
-	m3u8 := ""
 	config, config_err := readconfig.Get_config()
 	if config_err == nil {
 		daili = config.Proxy
 	}
 
+	if l.model_ID == "" {
+		modelID, err_getid := get_modelId(modelName, daili)
+		if err_getid != nil {
+			return nil, err_getid
+		}
+		l.model_ID = modelID
+	}
 	if l.m3u8Url == "" {
-		modelID, err := get_modelId(modelName, daili)
+		m3u8, err := get_M3u8(l.model_ID, daili)
 		if err != nil {
 			return nil, err
 		}
-		m3u8, err = get_M3u8(modelID, daili)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		m3u8 = l.m3u8Url
+		l.m3u8Url = m3u8
 	}
 
-	m3u8_status, err_testm3u8 := test_m3u8(m3u8, daili)
+	m3u8_status, err_testm3u8 := test_m3u8(l.m3u8Url, daili)
 	if m3u8_status {
-		if l.m3u8Url != m3u8 {
-			l.m3u8Url = m3u8
-		}
-		return utils.GenUrls(m3u8)
+		return utils.GenUrls(l.m3u8Url)
 	}
 
 	if !m3u8_status {
