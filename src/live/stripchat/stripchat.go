@@ -119,7 +119,7 @@ func get_M3u8(modelId string, daili string) (string, error) {
 		return "", ErrNullID
 	}
 	// url := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=lowLatency"
-	urlinput := "https://edge-hls.doppiocdn.net/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=standard"
+	urlinput := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=standard"
 	// url := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + ".m3u8"
 	//https://edge-hls.doppiocdn.com/hls/82030055/master/82030055_auto.m3u8
 	//https://media-hls.doppiocdn.com/b-hls-20/82030055/82030055.m3u8
@@ -128,6 +128,13 @@ func get_M3u8(modelId string, daili string) (string, error) {
 	if daili != "" {
 		request = request.Proxy(daili) //代理
 	}
+	request.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+	request.Set("Accept-Language", "en-US,en;q=0.5")
+	request.Set("Accept-Encoding", "gzip, deflate")
+	request.Set("Upgrade-Insecure-Requests", "1")
+	request.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0 Herring/91.1.1890.10")
+	request.Set("Connection", "close")
+
 	resp, body, errs := request.Get(urlinput).End()
 	if errs != nil {
 		for _, err := range errs {
@@ -143,8 +150,8 @@ func get_M3u8(modelId string, daili string) (string, error) {
 	if resp.StatusCode == 200 {
 		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=lowLatency)`)
 		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=standard)`) //等价于\?playlistType=standard
-		re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/[\w\/-]+.m3u8\?playlistType=standard)`) //https://media-hls.doppiocdn.com/b-hls-10/82030055/82030055_720p60.m3u8更新
-		matches := re.FindAllString(body, -1)                                                   // -1表示匹配所有结果
+		re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/[\w\/-]+.m3u8)`) //https://media-hls.doppiocdn.com/b-hls-10/82030055/82030055_720p60.m3u8更新
+		matches := re.FindAllString(body, -1)                            // -1表示匹配所有结果
 		if len(matches) > 1 {
 			secondMatch := matches[1]
 			return secondMatch, nil
