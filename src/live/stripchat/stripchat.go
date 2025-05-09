@@ -119,7 +119,7 @@ func get_M3u8(modelId string, daili string) (string, error) {
 		return "", ErrNullID
 	}
 	// url := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=lowLatency"
-	urlinput := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=standard"
+	urlinput := "https://edge-hls.doppiocdn.net/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=standard"
 	// url := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + ".m3u8"
 	//https://edge-hls.doppiocdn.com/hls/82030055/master/82030055_auto.m3u8
 	//https://media-hls.doppiocdn.com/b-hls-20/82030055/82030055.m3u8
