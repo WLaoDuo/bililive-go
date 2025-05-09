@@ -36,7 +36,7 @@ var (
 	Err_GetStreamUrls_Unexpected = errors.New("GetStreamUrls未知错误")
 	Err_TestUrl_Unexpected       = errors.New("testUrl未知错误")
 	ErrOffline                   = errors.New("OffLine")
-	ErrNullUrl                   = errors.New("no url")
+	ErrNullUrl                   = errors.New("null url")
 	ErrNullID                    = errors.New("null ID")
 )
 
@@ -119,7 +119,7 @@ func get_M3u8(modelId string, daili string) (string, error) {
 		return "", ErrNullID
 	}
 	// url := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=lowLatency"
-	urlinput := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=standard"
+	urlinput := "https://edge-hls.doppiocdn.net/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=standard"
 	// url := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + ".m3u8"
 	//https://edge-hls.doppiocdn.com/hls/82030055/master/82030055_auto.m3u8
 	//https://media-hls.doppiocdn.com/b-hls-20/82030055/82030055.m3u8
@@ -233,9 +233,6 @@ func (l *Live) GetInfo() (info *live.Info, err error) {
 	// 优先使用缓存的 model_ID
 	if l.model_ID == "" {
 		modelID, err_getid := get_modelId(modelName, daili)
-		if errors.Is(err_getid, live.ErrInternalError) {
-			return nil, live.ErrInternalError
-		}
 		if err_getid != nil {
 			if errors.Is(err_getid, live.ErrInternalError) {
 				return nil, live.ErrInternalError
@@ -247,14 +244,14 @@ func (l *Live) GetInfo() (info *live.Info, err error) {
 
 	m3u8, err_getm3u8 := get_M3u8(l.model_ID, daili)
 
-	if m3u8 == "" && l.m3u8Url != "" { //url
+	if m3u8 == "" && l.m3u8Url != "" { //m3u8默认优先，l.m3u8Url缓存兜底
 		m3u8 = l.m3u8Url
 	}
 	m3u8_status, err_testm3u8 := test_m3u8(m3u8, daili)
 
 	if m3u8_status { //strings.Contains(m3u8, ".m3u8")
 		if l.m3u8Url != m3u8 {
-			l.m3u8Url = m3u8 //l.m3u8Url缓存更新机制
+			l.m3u8Url = m3u8 //l.m3u8Url缓存更新机制，m3u8优先级高
 		}
 
 		info = &live.Info{
