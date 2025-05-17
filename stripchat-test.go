@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hr3lxphr6j/bililive-go/src/live"
@@ -129,8 +130,14 @@ func get_M3u8(modelId string, daili string) (string, error) {
 		// },
 		DisableKeepAlives: true, // 禁用 Keep-Alive
 	}
-	resp, body, errs := request.Get(urlinput).Retry(3, 1*time.Second, http.StatusInternalServerError).End()
+	resp, body, errs := request.Get(urlinput).End()
+	defer func() {
+		if resp != nil {
+			resp.Body.Close() // 必须关闭
+		}
+	}()
 	if errs != nil {
+		fmt.Println("错误的结果", resp, body)
 		fmt.Println("get_m3u8错误 ", errs)
 		for _, err := range errs {
 			if _, ok := err.(*url.Error); ok {
@@ -145,20 +152,87 @@ func get_M3u8(modelId string, daili string) (string, error) {
 	if resp.StatusCode == 200 {
 		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=lowLatency)`)
 		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=standard)`) //等价于\?playlistType=standard
-		re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/[\w\/-]+.m3u8)`) //https://media-hls.doppiocdn.com/b-hls-10/82030055/82030055_720p60.m3u8更新
-		matches := re.FindAllString(body, -1)                            // -1表示匹配所有结果
-		if len(matches) > 1 {
-			secondMatch := matches[1]
-			return secondMatch, nil
+		data, err_findm3u8 := regexM3U8(body, 0)
+		if err_findm3u8 != nil {
+			return "", err_findm3u8
 		}
-		if len(matches) == 1 {
-			return matches[0], nil
-		} else {
-			return "", errors.New(body + "m3u8正则未匹配")
-		}
+		fmt.Println("结果=", data)
+		return data, nil
+
+		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/[\w\/-]+.m3u8)`) //https://media-hls.doppiocdn.com/b-hls-10/82030055/82030055_720p60.m3u8更新
+		// matches := re.FindAllString(body, -1)                            // -1表示匹配所有结果
+		// if len(matches) > 1 {
+		// 	secondMatch := matches[1]
+		// 	return secondMatch, nil
+		// }
+		// if len(matches) == 1 {
+		// 	return matches[0], nil
+		// } else {
+		// 	return "", errors.New(body + "m3u8正则未匹配")
+		// }
 	} else {
 		return "", ErrFalse
 	}
+}
+
+func regexM3U8(data string, quality int) (string, error) { //l.Options.Quality
+	// 编译两个正则表达式
+	nameRe := regexp.MustCompile(`NAME="([\w]+)"`)
+	urlRe := regexp.MustCompile(`(https?:\/\/[^\s]+?\.m3u8(?:\?[^\s]+)?)`)
+
+	// data = `
+	// #EXTM3U
+	// #EXT-X-VERSION:6
+	// #EXT-X-MOUFLON:PSCH:v1:Zokee2OhPh9kugh4
+	// #EXT-X-STREAM-INF:BANDWIDTH=3911987,CODECS="avc1.4d6020,mp4a.40.2",RESOLUTION=1280x720,FRAME-RATE=60.000,CLOSED-CAPTIONS=NONE,NAME="720p60"
+	// https://media-hls.doppiocdn.net/b-hls-16/91895007/91895007_720p60.m3u8?playlistType=lowLatency
+	// #EXT-X-STREAM-INF:BANDWIDTH=2600857,CODECS="avc1.4d601f,mp4a.40.2",RESOLUTION=1280x720,FRAME-RATE=30.000,CLOSED-CAPTIONS=NONE,NAME="720p"
+	// https://media-hls.doppiocdn.net/b-hls-16/91895007/91895007_720p.m3u8?playlistType=lowLatency
+	// #EXT-X-STREAM-INF:BANDWIDTH=1445171,CODECS="avc1.4d601f,mp4a.40.2",RESOLUTION=854x480,FRAME-RATE=30.000,CLOSED-CAPTIONS=NONE,NAME="480p"
+	// https://media-hls.doppiocdn.net/b-hls-16/91895007/91895007_480p.m3u8?playlistType=lowLatency
+	// #EXT-X-STREAM-INF:BANDWIDTH=699494,CODECS="avc1.4d6015,mp4a.40.2",RESOLUTION=426x240,FRAME-RATE=30.000,CLOSED-CAPTIONS=NONE,NAME="240p"
+	// https://media-hls.doppiocdn.net/b-hls-16/91895007/91895007_240p.m3u8?playlistType=lowLatency
+	// #EXT-X-STREAM-INF:BANDWIDTH=341299,CODECS="avc1.4d600c,mp4a.40.2",RESOLUTION=284x160,FRAME-RATE=30.000,CLOSED-CAPTIONS=NONE,NAME="160p"
+	// https://media-hls.doppiocdn.net/b-hls-16/91895007/91895007_160p.m3u8?playlistType=lowLatency
+	// `
+	nameMatches := nameRe.FindAllStringSubmatch(data, -1)
+	urlMatches := urlRe.FindAllStringSubmatch(data, -1)
+
+	// 检查匹配结果
+	if len(nameMatches) == 0 || len(urlMatches) == 0 {
+		return "", errors.New(data + "m3u8正则未匹配")
+	}
+	if len(urlMatches) > 1 {
+		result := make(map[string]string) //字典
+		for i := 0; i < len(nameMatches); i++ {
+			if len(nameMatches[i]) > 1 && len(urlMatches[i]) > 1 {
+				name := nameMatches[i][1]
+				url := urlMatches[i][1]
+				result[name] = url
+			}
+		}
+		// fmt.Println("多个url=\n", result)
+
+		if quality == 0 { //储存优先 第二清晰度urlMatches[1][1]
+			return urlMatches[1][1], nil
+		}
+		if quality == 1 { //720p优先
+			for k, v := range result {
+				if strings.Contains(k, "720p") {
+					return v, nil
+				}
+			}
+			return urlMatches[1][1], nil //失败回退 储存优先
+		}
+		if quality == 2 { //清晰度最高，第一清晰度urlMatches[0][1]
+			return urlMatches[0][1], nil
+		}
+	}
+	if len(urlMatches) == 1 { //仅有一个url
+		return urlMatches[0][1], nil
+	}
+
+	return urlMatches[0][1], nil
 }
 func test_m3u8(urlinput string, daili string) (bool, error) {
 	if urlinput == "" {
@@ -272,7 +346,7 @@ func main() {
 	result, err_test := test_m3u8(m3u8, *daili)
 
 	test := Live{model_ID: modelID, m3u8Url: m3u8}
-	fmt.Println("getinfo:")
+	fmt.Println("\ngetinfo调用的getm3u8结果:")
 	fmt.Println(GetInfo(&test, *name, *daili))
 
 	if modelID != "" {
