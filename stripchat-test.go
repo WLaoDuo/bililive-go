@@ -4,10 +4,12 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"net/url"
 	"reflect"
 	"regexp"
 	"strconv"
+	"time"
 
 	"github.com/hr3lxphr6j/bililive-go/src/live"
 	"github.com/parnurzeal/gorequest"
@@ -109,7 +111,7 @@ func get_M3u8(modelId string, daili string) (string, error) {
 	//https://media-hls.doppiocdn.com/b-hls-20/82030055/82030055.m3u8
 	//https://edge-hls.doppiocdn.com/hls/82030055/master/82030055.m3u8
 	urlinput := "https://edge-hls.doppiocdn.net/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=standard"
-	request := gorequest.New()
+	request := gorequest.New().Timeout(1 * time.Second)
 	if daili != "" {
 		request = request.Proxy(daili) //代理
 	}
@@ -119,10 +121,17 @@ func get_M3u8(modelId string, daili string) (string, error) {
 	request.Set("Upgrade-Insecure-Requests", "1")
 	request.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0 Herring/91.1.1890.10")
 	request.Set("Connection", "close")
-
-	resp, body, errs := request.Get(urlinput).End()
+	request.Client.Transport = &http.Transport{
+		// ForceAttemptHTTP2: false, // 强制使用 HTTP/1.1
+		// TLSClientConfig: &tls.Config{
+		// MinVersion:         tls.VersionTLS12, // 强制使用 TLS 1.2
+		// InsecureSkipVerify: true,             // 仅用于测试，生产环境不要使用
+		// },
+		DisableKeepAlives: true, // 禁用 Keep-Alive
+	}
+	resp, body, errs := request.Get(urlinput).Retry(3, 1*time.Second, http.StatusInternalServerError).End()
 	if errs != nil {
-		fmt.Println(errs)
+		fmt.Println("get_m3u8错误 ", errs)
 		for _, err := range errs {
 			if _, ok := err.(*url.Error); ok {
 				return "", live.ErrInternalError
@@ -136,8 +145,8 @@ func get_M3u8(modelId string, daili string) (string, error) {
 	if resp.StatusCode == 200 {
 		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=lowLatency)`)
 		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=standard)`) //等价于\?playlistType=standard
-		re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/[\w\/-]+.m3u8\?playlistType=standard)`) //https://media-hls.doppiocdn.com/b-hls-10/82030055/82030055_720p60.m3u8更新
-		matches := re.FindAllString(body, -1)                                                   // -1表示匹配所有结果
+		re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/[\w\/-]+.m3u8)`) //https://media-hls.doppiocdn.com/b-hls-10/82030055/82030055_720p60.m3u8更新
+		matches := re.FindAllString(body, -1)                            // -1表示匹配所有结果
 		if len(matches) > 1 {
 			secondMatch := matches[1]
 			return secondMatch, nil
@@ -159,8 +168,17 @@ func test_m3u8(urlinput string, daili string) (bool, error) {
 		if daili != "" {
 			request = request.Proxy(daili) //代理
 		}
+		request.Client.Transport = &http.Transport{
+			// ForceAttemptHTTP2: false, // 强制使用 HTTP/1.1
+			// TLSClientConfig: &tls.Config{
+			// 	MinVersion:         tls.VersionTLS12, // 强制使用 TLS 1.2
+			// 	InsecureSkipVerify: true,             // 仅用于测试，生产环境不要使用
+			// },
+			DisableKeepAlives: true, // 禁用 Keep-Alive
+		}
 		resp, body, errs := request.Get(urlinput).End()
 		if errs != nil {
+			fmt.Println("test_m3u8错误", errs)
 			for _, err := range errs {
 				if _, ok := err.(*url.Error); ok {
 					return false, live.ErrInternalError
@@ -254,6 +272,7 @@ func main() {
 	result, err_test := test_m3u8(m3u8, *daili)
 
 	test := Live{model_ID: modelID, m3u8Url: m3u8}
+	fmt.Println("getinfo:")
 	fmt.Println(GetInfo(&test, *name, *daili))
 
 	if modelID != "" {
