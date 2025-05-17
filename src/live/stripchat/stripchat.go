@@ -150,8 +150,8 @@ func get_M3u8(modelId string, daili string) (string, error) {
 	if resp.StatusCode == 200 {
 		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=lowLatency)`)
 		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=standard)`) //等价于\?playlistType=standard
-		re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/[\w\/-]+.m3u8)`) //https://media-hls.doppiocdn.com/b-hls-10/82030055/82030055_720p60.m3u8更新
-		matches := re.FindAllString(body, -1)                            // -1表示匹配所有结果
+		re := regexp.MustCompile(`(https?:\/\/[^\s]+?\.m3u8(?:\?[^\s]+)?)`) //https://media-hls.doppiocdn.com/b-hls-10/82030055/82030055_720p60.m3u8更新
+		matches := re.FindAllString(body, -1)                               // -1表示匹配所有结果
 		if len(matches) > 1 {
 			secondMatch := matches[1]
 			return secondMatch, nil
