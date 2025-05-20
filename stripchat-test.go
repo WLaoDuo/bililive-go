@@ -152,7 +152,7 @@ func get_M3u8(modelId string, daili string) (string, error) {
 	if resp.StatusCode == 200 {
 		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=lowLatency)`)
 		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=standard)`) //等价于\?playlistType=standard
-		data, err_findm3u8 := regexM3U8(body, 0)
+		data, err_findm3u8 := regexM3U8(body, 2)
 		if err_findm3u8 != nil {
 			return "", err_findm3u8
 		}
@@ -176,7 +176,9 @@ func get_M3u8(modelId string, daili string) (string, error) {
 }
 
 func regexM3U8(data string, quality int) (string, error) { //l.Options.Quality
-	// 编译两个正则表达式
+	if quality != 0 && quality != 1 && quality != 2 {
+		quality = 0
+	}
 	nameRe := regexp.MustCompile(`NAME="([\w]+)"`)
 	urlRe := regexp.MustCompile(`(https?:\/\/[^\s]+?\.m3u8(?:\?[^\s]+)?)`)
 
@@ -232,7 +234,7 @@ func regexM3U8(data string, quality int) (string, error) { //l.Options.Quality
 		return urlMatches[0][1], nil
 	}
 
-	return urlMatches[0][1], nil
+	return "", errors.New(data + "m3u8正则未匹配")
 }
 func test_m3u8(urlinput string, daili string) (bool, error) {
 	if urlinput == "" {
