@@ -215,8 +215,13 @@ func regexM3U8(data string, quality int) (string, error) { //l.Options.Quality
 		}
 		// fmt.Println("多个url=\n", result)
 
-		if quality == 0 { //储存优先 第二清晰度urlMatches[1][1]
-			return urlMatches[1][1], nil
+		if quality == 0 { //储存优先480p
+			for k, v := range result {
+				if strings.Contains(k, "480p") {
+					return v, nil
+				}
+			}
+			return urlMatches[len(urlMatches)-2][1], nil //倒数第二
 		}
 		if quality == 1 { //720p优先
 			for k, v := range result {
@@ -224,7 +229,7 @@ func regexM3U8(data string, quality int) (string, error) { //l.Options.Quality
 					return v, nil
 				}
 			}
-			return urlMatches[1][1], nil //失败回退 储存优先
+			return urlMatches[1][1], nil //失败回退 第二清晰度
 		}
 		if quality == 2 { //清晰度最高，第一清晰度urlMatches[0][1]
 			return urlMatches[0][1], nil
