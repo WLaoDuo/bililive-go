@@ -1,15 +1,21 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hr3lxphr6j/bililive-go/src/live"
@@ -102,6 +108,252 @@ func get_modelId(modleName string, daili string) (string, error) {
 	}
 }
 
+// 全局客户端管理器
+type RequestManager struct {
+	clients map[string]*gorequest.SuperAgent
+	mutex   sync.RWMutex
+}
+
+var (
+	manager *RequestManager
+	once    sync.Once
+)
+
+// 获取全局管理器实例（单例模式）
+func getManager() *RequestManager {
+	once.Do(func() {
+		manager = &RequestManager{
+			clients: make(map[string]*gorequest.SuperAgent),
+		}
+	})
+	return manager
+}
+
+// 创建优化的 gorequest 实例
+func createOptimizedRequest(daili string) *gorequest.SuperAgent {
+	request := gorequest.New()
+
+	// 配置连接池
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 20,
+		MaxConnsPerHost:     50,
+		IdleConnTimeout:     90 * time.Second,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout: 10 * time.Second,
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: false,
+		},
+		DisableKeepAlives:     false,
+		ResponseHeaderTimeout: 30 * time.Second,
+		// 禁用自动压缩，我们手动处理
+		DisableCompression: true,
+	}
+
+	// 设置代理
+	if daili != "" {
+		if proxyUrl, err := url.Parse(daili); err == nil {
+			transport.Proxy = http.ProxyURL(proxyUrl)
+		}
+	}
+
+	request.Transport = transport
+	request.Timeout(60 * time.Second)
+	return request
+}
+
+// 获取客户端实例（自动初始化和复用）
+func (rm *RequestManager) getClient(daili string) *gorequest.SuperAgent {
+	rm.mutex.RLock()
+	client, exists := rm.clients[daili]
+	rm.mutex.RUnlock()
+
+	if exists {
+		return client
+	}
+
+	rm.mutex.Lock()
+	defer rm.mutex.Unlock()
+
+	// 双重检查锁定
+	if client, exists := rm.clients[daili]; exists {
+		return client
+	}
+
+	client = createOptimizedRequest(daili)
+	rm.clients[daili] = client
+	return client
+}
+
+// 解压缩gzip内容
+func decompressGzip(data []byte) (string, error) {
+	reader, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return "", err
+	}
+	defer reader.Close()
+
+	result, err := io.ReadAll(reader)
+	if err != nil {
+		return "", err
+	}
+
+	return string(result), nil
+}
+
+// 智能处理响应内容
+func processResponseBody(resp *http.Response, bodyStr string) (string, error) {
+	if resp == nil {
+		return bodyStr, nil
+	}
+
+	// 检查Content-Encoding头
+	encoding := resp.Header.Get("Content-Encoding")
+
+	switch strings.ToLower(encoding) {
+	case "gzip":
+		// 如果bodyStr包含乱码，尝试解压缩
+		if strings.Contains(bodyStr, "�") || len(bodyStr) > 0 && bodyStr[0] == 0x1f {
+			decompressed, err := decompressGzip([]byte(bodyStr))
+			if err == nil {
+				return decompressed, nil
+			}
+		}
+	case "deflate":
+		// 处理deflate压缩（如果需要）
+		// 这里可以添加deflate解压缩逻辑
+	}
+
+	return bodyStr, nil
+}
+
+// 主要的请求函数 - 修复版本
+func OptimizedGet(urlinput, daili string) (*http.Response, string, []error) {
+	client := getManager().getClient(daili)
+
+	resp, body, errs := client.Get(urlinput).
+		Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8").
+		Set("Accept-Language", "en-US,en;q=0.5").
+		Set("Accept-Encoding", "gzip, deflate").
+		Set("Upgrade-Insecure-Requests", "1").
+		Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0").
+		Set("Connection", "keep-alive").
+		End()
+
+	// 如果有错误，直接返回
+	if len(errs) > 0 {
+		return resp, body, errs
+	}
+
+	// 智能处理响应内容
+	processedBody, err := processResponseBody(resp, body)
+	if err != nil {
+		errs = append(errs, err)
+		return resp, body, errs
+	}
+
+	return resp, processedBody, errs
+}
+
+// 带自定义头部的请求函数 - 修复版本
+func OptimizedGetWithHeaders(urlinput, daili string, headers map[string]string) (*http.Response, string, []error) {
+	client := getManager().getClient(daili)
+
+	req := client.Get(urlinput).
+		Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8").
+		Set("Accept-Language", "en-US,en;q=0.5").
+		Set("Accept-Encoding", "gzip, deflate").
+		Set("Upgrade-Insecure-Requests", "1").
+		Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0").
+		Set("Connection", "keep-alive")
+
+	// 添加自定义头部
+	for key, value := range headers {
+		req = req.Set(key, value)
+	}
+
+	resp, body, errs := req.End()
+
+	// 如果有错误，直接返回
+	if len(errs) > 0 {
+		return resp, body, errs
+	}
+
+	// 智能处理响应内容
+	processedBody, err := processResponseBody(resp, body)
+	if err != nil {
+		errs = append(errs, err)
+		return resp, body, errs
+	}
+
+	return resp, processedBody, errs
+}
+
+// 带重试机制的请求
+func OptimizedGetWithRetry(urlinput, daili string, maxRetries int) (*http.Response, string, []error) {
+	var resp *http.Response
+	var body string
+	var errs []error
+
+	for i := 0; i < maxRetries; i++ {
+		resp, body, errs = OptimizedGet(urlinput, daili)
+
+		// 检查是否成功
+		if len(errs) == 0 && resp != nil && resp.StatusCode < 500 {
+			return resp, body, errs
+		}
+
+		// 指数退避重试
+		if i < maxRetries-1 {
+			time.Sleep(time.Duration(i+1) * time.Second)
+		}
+	}
+
+	return resp, body, errs
+}
+
+// 并发控制版本
+type ConcurrentRequester struct {
+	semaphore chan struct{}
+}
+
+func NewConcurrentRequester(maxConcurrency int) *ConcurrentRequester {
+	return &ConcurrentRequester{
+		semaphore: make(chan struct{}, maxConcurrency),
+	}
+}
+
+func (cr *ConcurrentRequester) Get(urlinput, daili string) (*http.Response, string, []error) {
+	cr.semaphore <- struct{}{}
+	defer func() { <-cr.semaphore }()
+	return OptimizedGet(urlinput, daili)
+}
+
+// 调试函数：检查响应头和内容
+func DebugResponse(resp *http.Response, body string) {
+	if resp != nil {
+		fmt.Printf("Status Code: %d\n", resp.StatusCode)
+		fmt.Printf("Content-Type: %s\n", resp.Header.Get("Content-Type"))
+		fmt.Printf("Content-Encoding: %s\n", resp.Header.Get("Content-Encoding"))
+		fmt.Printf("Content-Length: %s\n", resp.Header.Get("Content-Length"))
+		fmt.Printf("Body Length: %d\n", len(body))
+
+		// 检查是否是二进制内容
+		if len(body) > 0 {
+			fmt.Printf("First few bytes: %v\n", []byte(body[:min(10, len(body))]))
+		}
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
 func get_M3u8(modelId string, daili string) (string, error) {
 	if modelId == "" { // || modelId == "false" || modelId == "OffLine" || modelId == "url.Error" {
 		return "", ErrNullID
@@ -112,25 +364,28 @@ func get_M3u8(modelId string, daili string) (string, error) {
 	//https://media-hls.doppiocdn.com/b-hls-20/82030055/82030055.m3u8
 	//https://edge-hls.doppiocdn.com/hls/82030055/master/82030055.m3u8
 	urlinput := "https://edge-hls.doppiocdn.net/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=standard"
-	request := gorequest.New().Timeout(1 * time.Second)
-	if daili != "" {
-		request = request.Proxy(daili) //代理
-	}
-	request.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
-	request.Set("Accept-Language", "en-US,en;q=0.5")
-	request.Set("Accept-Encoding", "gzip, deflate")
-	request.Set("Upgrade-Insecure-Requests", "1")
-	request.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0 Herring/91.1.1890.10")
-	request.Set("Connection", "close")
-	request.Client.Transport = &http.Transport{
-		// ForceAttemptHTTP2: false, // 强制使用 HTTP/1.1
-		// TLSClientConfig: &tls.Config{
-		// MinVersion:         tls.VersionTLS12, // 强制使用 TLS 1.2
-		// InsecureSkipVerify: true,             // 仅用于测试，生产环境不要使用
-		// },
-		DisableKeepAlives: true, // 禁用 Keep-Alive
-	}
-	resp, body, errs := request.Get(urlinput).End()
+
+	// request := gorequest.New().Timeout(1 * time.Second)
+	// if daili != "" {
+	// 	request = request.Proxy(daili) //代理
+	// }
+	// request.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+	// request.Set("Accept-Language", "en-US,en;q=0.5")
+	// request.Set("Accept-Encoding", "gzip, deflate")
+	// request.Set("Upgrade-Insecure-Requests", "1")
+	// request.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0 Herring/91.1.1890.10")
+	// request.Set("Connection", "close")
+	// request.Client.Transport = &http.Transport{
+	// 	// ForceAttemptHTTP2: false, // 强制使用 HTTP/1.1
+	// 	// TLSClientConfig: &tls.Config{
+	// 	// MinVersion:         tls.VersionTLS12, // 强制使用 TLS 1.2
+	// 	// InsecureSkipVerify: true,             // 仅用于测试，生产环境不要使用
+	// 	// },
+	// 	DisableKeepAlives: true, // 禁用 Keep-Alive
+	// }
+	// resp, body, errs := request.Get(urlinput).End()
+	resp, body, errs := OptimizedGet(urlinput, daili)
+	// DebugResponse(resp, body) // 查看响应详情
 	defer func() {
 		if resp != nil {
 			resp.Body.Close() // 必须关闭
@@ -152,7 +407,7 @@ func get_M3u8(modelId string, daili string) (string, error) {
 	if resp.StatusCode == 200 {
 		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=lowLatency)`)
 		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=standard)`) //等价于\?playlistType=standard
-		data, err_findm3u8 := regexM3U8(body, 2)
+		data, err_findm3u8 := regexM3U8(body, 0)
 		if err_findm3u8 != nil {
 			return "", err_findm3u8
 		}
