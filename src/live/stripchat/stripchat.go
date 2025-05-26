@@ -150,8 +150,8 @@ func createOptimizedRequest(daili string) *gorequest.SuperAgent {
 	transport := &http.Transport{
 		MaxIdleConns:        200,              // 全局最大空闲连接
 		MaxIdleConnsPerHost: 100,              // 单域名最大空闲连接
-		MaxConnsPerHost:     50,               // 空闲连接超时
-		IdleConnTimeout:     90 * time.Second, // TLS握手超时
+		MaxConnsPerHost:     0,                //单域名最大连接，0不限制
+		IdleConnTimeout:     90 * time.Second, // 空闲连接超时
 
 		DialContext: (&net.Dialer{
 			Timeout:   30 * time.Second,
