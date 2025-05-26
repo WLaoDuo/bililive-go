@@ -1,13 +1,10 @@
 package main
 
 import (
-	"bytes"
-	"compress/gzip"
 	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -38,27 +35,29 @@ func get_modelId(modleName string, daili string) (string, error) {
 	if modleName == "" {
 		return "", ErrModelName
 	}
-	request := gorequest.New()
-	if daili != "" {
-		request = request.Proxy(daili) //代理
-	}
 
-	// 添加头部信息
-	request.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-	request.Set("Accept-Language", "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2")
-	request.Set("Accept-Encoding", "gzip, deflate")
-	request.Set("Upgrade-Insecure-Requests", "1")
-	request.Set("Sec-Fetch-Dest", "document")
-	request.Set("Sec-Fetch-Mode", "navigate")
-	request.Set("Sec-Fetch-Site", "none")
-	request.Set("Sec-Fetch-User", "?1")
-	request.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0")
-	// request.Set("If-Modified-Since", "Mon, 29 Jul 2024 08:41:12 GMT")
-	request.Set("Te", "trailers")
-	request.Set("Connection", "close")
+	// request := gorequest.New()
+	// if daili != "" {
+	// 	request = request.Proxy(daili) //代理
+	// }
+
+	// // 添加头部信息
+	// request.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+	// request.Set("Accept-Language", "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2")
+	// request.Set("Accept-Encoding", "gzip, deflate")
+	// request.Set("Upgrade-Insecure-Requests", "1")
+	// request.Set("Sec-Fetch-Dest", "document")
+	// request.Set("Sec-Fetch-Mode", "navigate")
+	// request.Set("Sec-Fetch-Site", "none")
+	// request.Set("Sec-Fetch-User", "?1")
+	// request.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0")
+	// // request.Set("If-Modified-Since", "Mon, 29 Jul 2024 08:41:12 GMT")
+	// request.Set("Te", "trailers")
+	// request.Set("Connection", "close")
 
 	//优先此api
-	_, body2, errs2 := request.Get("https://zh.stripchat.com/api/front/models/username/" + modleName + "/knights").End() //这个url主播离线也能获取id
+	_, body2, errs2 := OptimizedGet("https://zh.stripchat.com/api/front/models/username/"+modleName+"/knights", daili)
+	// _, body2, errs2 := request.Get("https://zh.stripchat.com/api/front/models/username/" + modleName + "/knights").End() //这个url主播离线也能获取id
 	if errs2 != nil {
 		for _, err := range errs2 {
 			if urlErr, ok := err.(*url.Error); ok {
@@ -77,7 +76,8 @@ func get_modelId(modleName string, daili string) (string, error) {
 	}
 
 	//此api需要等主播上线才可用，适用性差
-	_, body, errs := request.Get("https://zh.stripchat.com/api/front/v2/models/username/" + modleName + "/chat").End()
+	// _, body, errs := request.Get("https://zh.stripchat.com/api/front/v2/models/username/" + modleName + "/chat").End()
+	_, body, errs := OptimizedGet("https://zh.stripchat.com/api/front/v2/models/username/"+modleName+"/chat", daili)
 	if errs != nil {
 		for _, err := range errs {
 			if _, ok := err.(*url.Error); ok {
@@ -135,33 +135,39 @@ func createOptimizedRequest(daili string) *gorequest.SuperAgent {
 
 	// 配置连接池
 	transport := &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 20,
-		MaxConnsPerHost:     50,
-		IdleConnTimeout:     90 * time.Second,
+		MaxIdleConns:        200,              // 全局最大空闲连接
+		MaxIdleConnsPerHost: 100,              // 单域名最大空闲连接
+		MaxConnsPerHost:     50,               // 空闲连接超时
+		IdleConnTimeout:     90 * time.Second, // TLS握手超时
+
 		DialContext: (&net.Dialer{
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
+
 		TLSHandshakeTimeout: 10 * time.Second,
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: false,
 		},
+
 		DisableKeepAlives:     false,
 		ResponseHeaderTimeout: 30 * time.Second,
-		// 禁用自动压缩，我们手动处理
-		DisableCompression: true,
 	}
 
-	// 设置代理
-	if daili != "" {
-		if proxyUrl, err := url.Parse(daili); err == nil {
-			transport.Proxy = http.ProxyURL(proxyUrl)
-		}
-	}
+	// // 设置代理
+	// if daili != "" {
+	// 	if proxyUrl, err := url.Parse(daili); err == nil {
+	// 		transport.Proxy = http.ProxyURL(proxyUrl)
+	// 	}
+	// }
 
 	request.Transport = transport
+
+	if daili != "" { // 设置代理
+		request = request.Proxy(daili)
+	}
 	request.Timeout(60 * time.Second)
+
 	return request
 }
 
@@ -188,86 +194,47 @@ func (rm *RequestManager) getClient(daili string) *gorequest.SuperAgent {
 	return client
 }
 
-// 解压缩gzip内容
-func decompressGzip(data []byte) (string, error) {
-	reader, err := gzip.NewReader(bytes.NewReader(data))
-	if err != nil {
-		return "", err
-	}
-	defer reader.Close()
-
-	result, err := io.ReadAll(reader)
-	if err != nil {
-		return "", err
-	}
-
-	return string(result), nil
-}
-
-// 智能处理响应内容
-func processResponseBody(resp *http.Response, bodyStr string) (string, error) {
-	if resp == nil {
-		return bodyStr, nil
-	}
-
-	// 检查Content-Encoding头
-	encoding := resp.Header.Get("Content-Encoding")
-
-	switch strings.ToLower(encoding) {
-	case "gzip":
-		// 如果bodyStr包含乱码，尝试解压缩
-		if strings.Contains(bodyStr, "�") || len(bodyStr) > 0 && bodyStr[0] == 0x1f {
-			decompressed, err := decompressGzip([]byte(bodyStr))
-			if err == nil {
-				return decompressed, nil
-			}
-		}
-	case "deflate":
-		// 处理deflate压缩（如果需要）
-		// 这里可以添加deflate解压缩逻辑
-	}
-
-	return bodyStr, nil
-}
-
-// 主要的请求函数 - 修复版本
+// 主要的请求函数 - 直接替换你的原代码
 func OptimizedGet(urlinput, daili string) (*http.Response, string, []error) {
 	client := getManager().getClient(daili)
 
-	resp, body, errs := client.Get(urlinput).
+	return client.Get(urlinput).
 		Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8").
 		Set("Accept-Language", "en-US,en;q=0.5").
-		Set("Accept-Encoding", "gzip, deflate").
+		// Set("Accept-Encoding", "gzip, deflate"). // 压缩 无法自动解压，出现乱码
+		Set("Accept-Encoding", "identity"). // 不接受压缩
 		Set("Upgrade-Insecure-Requests", "1").
-		Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0").
+		Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0 Herring/91.1.1890.10").
 		Set("Connection", "keep-alive").
 		End()
-
-	// 如果有错误，直接返回
-	if len(errs) > 0 {
-		return resp, body, errs
-	}
-
-	// 智能处理响应内容
-	processedBody, err := processResponseBody(resp, body)
-	if err != nil {
-		errs = append(errs, err)
-		return resp, body, errs
-	}
-
-	return resp, processedBody, errs
 }
 
-// 带自定义头部的请求函数 - 修复版本
+// POST 请求封装
+func OptimizedPost(urlinput, daili string, data interface{}) (*http.Response, string, []error) {
+	client := getManager().getClient(daili)
+
+	return client.Post(urlinput).
+		Send(data).
+		Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8").
+		Set("Accept-Language", "en-US,en;q=0.5").
+		// Set("Accept-Encoding", "gzip, deflate"). // 压缩支持
+		Set("Accept-Encoding", "identity"). // 不接受压缩
+		Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0 Herring/91.1.1890.10").
+		Set("Connection", "keep-alive").
+		End()
+}
+
+// 带自定义头部的请求函数
 func OptimizedGetWithHeaders(urlinput, daili string, headers map[string]string) (*http.Response, string, []error) {
 	client := getManager().getClient(daili)
 
 	req := client.Get(urlinput).
 		Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8").
 		Set("Accept-Language", "en-US,en;q=0.5").
-		Set("Accept-Encoding", "gzip, deflate").
+		// Set("Accept-Encoding", "gzip, deflate"). // 压缩支持
+		Set("Accept-Encoding", "identity"). // 不接受压缩
 		Set("Upgrade-Insecure-Requests", "1").
-		Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0").
+		Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0 Herring/91.1.1890.10").
 		Set("Connection", "keep-alive")
 
 	// 添加自定义头部
@@ -275,21 +242,7 @@ func OptimizedGetWithHeaders(urlinput, daili string, headers map[string]string) 
 		req = req.Set(key, value)
 	}
 
-	resp, body, errs := req.End()
-
-	// 如果有错误，直接返回
-	if len(errs) > 0 {
-		return resp, body, errs
-	}
-
-	// 智能处理响应内容
-	processedBody, err := processResponseBody(resp, body)
-	if err != nil {
-		errs = append(errs, err)
-		return resp, body, errs
-	}
-
-	return resp, processedBody, errs
+	return req.End()
 }
 
 // 带重试机制的请求
@@ -329,30 +282,15 @@ func NewConcurrentRequester(maxConcurrency int) *ConcurrentRequester {
 func (cr *ConcurrentRequester) Get(urlinput, daili string) (*http.Response, string, []error) {
 	cr.semaphore <- struct{}{}
 	defer func() { <-cr.semaphore }()
+
 	return OptimizedGet(urlinput, daili)
 }
 
-// 调试函数：检查响应头和内容
-func DebugResponse(resp *http.Response, body string) {
-	if resp != nil {
-		fmt.Printf("Status Code: %d\n", resp.StatusCode)
-		fmt.Printf("Content-Type: %s\n", resp.Header.Get("Content-Type"))
-		fmt.Printf("Content-Encoding: %s\n", resp.Header.Get("Content-Encoding"))
-		fmt.Printf("Content-Length: %s\n", resp.Header.Get("Content-Length"))
-		fmt.Printf("Body Length: %d\n", len(body))
-
-		// 检查是否是二进制内容
-		if len(body) > 0 {
-			fmt.Printf("First few bytes: %v\n", []byte(body[:min(10, len(body))]))
-		}
+// 清理函数（可选，通常不需要调用）
+func CleanupClients() {
+	manager = &RequestManager{
+		clients: make(map[string]*gorequest.SuperAgent),
 	}
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 func get_M3u8(modelId string, daili string) (string, error) {
 	if modelId == "" { // || modelId == "false" || modelId == "OffLine" || modelId == "url.Error" {
@@ -385,12 +323,6 @@ func get_M3u8(modelId string, daili string) (string, error) {
 	// }
 	// resp, body, errs := request.Get(urlinput).End()
 	resp, body, errs := OptimizedGet(urlinput, daili)
-	// DebugResponse(resp, body) // 查看响应详情
-	defer func() {
-		if resp != nil {
-			resp.Body.Close() // 必须关闭
-		}
-	}()
 	if errs != nil {
 		fmt.Println("错误的结果", resp, body)
 		fmt.Println("get_m3u8错误 ", errs)
