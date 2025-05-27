@@ -121,36 +121,33 @@ func get_modelId(modleName string, daili string) (string, error) {
 	}
 }
 
-// 全局客户端管理器
-type RequestManager struct {
-	clients map[string]*gorequest.SuperAgent
-	mutex   sync.RWMutex
+// 连接池管理器 - 只管理http.Transport，不共享gorequest实例
+type TransportManager struct {
+	transports map[string]*http.Transport
+	mutex      sync.RWMutex
 }
 
 var (
-	manager *RequestManager
-	once    sync.Once
+	transportManager *TransportManager
+	once             sync.Once
 )
 
-// 获取全局管理器实例（单例模式）
-func getManager() *RequestManager {
+// 获取全局Transport管理器实例（单例模式）
+func getTransportManager() *TransportManager {
 	once.Do(func() {
-		manager = &RequestManager{
-			clients: make(map[string]*gorequest.SuperAgent),
+		transportManager = &TransportManager{
+			transports: make(map[string]*http.Transport),
 		}
 	})
-	return manager
+	return transportManager
 }
 
-// 创建优化的 gorequest 实例
-func createOptimizedRequest(daili string) *gorequest.SuperAgent {
-	request := gorequest.New()
-
-	// 配置连接池
+// 创建优化的 Transport 实例
+func createOptimizedTransport(daili string) *http.Transport {
 	transport := &http.Transport{
 		MaxIdleConns:        200,              // 全局最大空闲连接
 		MaxIdleConnsPerHost: 100,              // 单域名最大空闲连接
-		MaxConnsPerHost:     0,                //单域名最大连接，0不限制
+		MaxConnsPerHost:     0,                // 单域名最大连接，0不限制
 		IdleConnTimeout:     90 * time.Second, // 空闲连接超时
 
 		DialContext: (&net.Dialer{
@@ -167,54 +164,66 @@ func createOptimizedRequest(daili string) *gorequest.SuperAgent {
 		ResponseHeaderTimeout: 30 * time.Second,
 	}
 
-	// // 设置代理
-	// if daili != "" {
-	// 	if proxyUrl, err := url.Parse(daili); err == nil {
-	// 		transport.Proxy = http.ProxyURL(proxyUrl)
-	// 	}
-	// }
+	// 设置代理
+	if daili != "" {
+		if proxyUrl, err := url.Parse(daili); err == nil {
+			transport.Proxy = http.ProxyURL(proxyUrl)
+		}
+	}
 
+	return transport
+}
+
+// 获取Transport实例（自动初始化和复用）
+func (tm *TransportManager) getTransport(daili string) *http.Transport {
+	tm.mutex.RLock()
+	transport, exists := tm.transports[daili]
+	tm.mutex.RUnlock()
+
+	if exists {
+		return transport
+	}
+
+	tm.mutex.Lock()
+	defer tm.mutex.Unlock()
+
+	// 双重检查锁定
+	if transport, exists := tm.transports[daili]; exists {
+		return transport
+	}
+
+	transport = createOptimizedTransport(daili)
+	tm.transports[daili] = transport
+	return transport
+}
+
+// 为每个请求创建新的gorequest实例，但复用Transport
+func createRequestWithSharedTransport(daili string) *gorequest.SuperAgent {
+	request := gorequest.New()
+
+	// 获取共享的Transport
+	transport := getTransportManager().getTransport(daili)
 	request.Transport = transport
 
-	if daili != "" { // 设置代理
+	// 设置代理（如果gorequest实例需要单独处理代理逻辑）
+	if daili != "" {
 		request = request.Proxy(daili)
 	}
+
 	request.Timeout(60 * time.Second)
 
 	return request
 }
 
-// 获取客户端实例（自动初始化和复用）
-func (rm *RequestManager) getClient(daili string) *gorequest.SuperAgent {
-	rm.mutex.RLock()
-	client, exists := rm.clients[daili]
-	rm.mutex.RUnlock()
-
-	if exists {
-		return client
-	}
-
-	rm.mutex.Lock()
-	defer rm.mutex.Unlock()
-
-	// 双重检查锁定
-	if client, exists := rm.clients[daili]; exists {
-		return client
-	}
-
-	client = createOptimizedRequest(daili)
-	rm.clients[daili] = client
-	return client
-}
-
-// 主要的请求函数 - 直接替换你的原代码
+// 修复后的主要请求函数 - 每次创建新的gorequest实例
 func OptimizedGet(urlinput, daili string) (*http.Response, string, []error) {
-	client := getManager().getClient(daili)
+	// 关键修复：为每个请求创建新的SuperAgent实例
+	// 这样避免了多个goroutine共享同一个SuperAgent实例导致的并发问题
+	client := createRequestWithSharedTransport(daili)
 
 	return client.Get(urlinput).
 		Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8").
 		Set("Accept-Language", "en-US,en;q=0.5").
-		// Set("Accept-Encoding", "gzip, deflate"). // 压缩 无法自动解压，出现乱码
 		Set("Accept-Encoding", "identity"). // 不接受压缩
 		Set("Upgrade-Insecure-Requests", "1").
 		Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0 Herring/91.1.1890.10").
@@ -224,13 +233,12 @@ func OptimizedGet(urlinput, daili string) (*http.Response, string, []error) {
 
 // POST 请求封装
 func OptimizedPost(urlinput, daili string, data interface{}) (*http.Response, string, []error) {
-	client := getManager().getClient(daili)
+	client := createRequestWithSharedTransport(daili)
 
 	return client.Post(urlinput).
 		Send(data).
 		Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8").
 		Set("Accept-Language", "en-US,en;q=0.5").
-		// Set("Accept-Encoding", "gzip, deflate"). // 压缩支持
 		Set("Accept-Encoding", "identity"). // 不接受压缩
 		Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0 Herring/91.1.1890.10").
 		Set("Connection", "keep-alive").
@@ -239,12 +247,11 @@ func OptimizedPost(urlinput, daili string, data interface{}) (*http.Response, st
 
 // 带自定义头部的请求函数
 func OptimizedGetWithHeaders(urlinput, daili string, headers map[string]string) (*http.Response, string, []error) {
-	client := getManager().getClient(daili)
+	client := createRequestWithSharedTransport(daili)
 
 	req := client.Get(urlinput).
 		Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8").
 		Set("Accept-Language", "en-US,en;q=0.5").
-		// Set("Accept-Encoding", "gzip, deflate"). // 压缩支持
 		Set("Accept-Encoding", "identity"). // 不接受压缩
 		Set("Upgrade-Insecure-Requests", "1").
 		Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0 Herring/91.1.1890.10").
@@ -299,10 +306,19 @@ func (cr *ConcurrentRequester) Get(urlinput, daili string) (*http.Response, stri
 	return OptimizedGet(urlinput, daili)
 }
 
-// 清理函数（可选，通常不需要调用）
-func CleanupClients() {
-	manager = &RequestManager{
-		clients: make(map[string]*gorequest.SuperAgent),
+// 清理函数 - 清理Transport池
+func CleanupTransports() {
+	if transportManager != nil {
+		transportManager.mutex.Lock()
+		defer transportManager.mutex.Unlock()
+
+		// 关闭所有Transport的空闲连接
+		for _, transport := range transportManager.transports {
+			transport.CloseIdleConnections()
+		}
+
+		// 重新初始化
+		transportManager.transports = make(map[string]*http.Transport)
 	}
 }
 func get_M3u8(modelId string, daili string, flag int) (string, error) {
