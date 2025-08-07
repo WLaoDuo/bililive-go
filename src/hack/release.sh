@@ -32,7 +32,7 @@ package() {
 
 
 target_platform=("windows" "linux" )
-target_arch=("amd64")
+target_arch=("amd64" "arm64")
 # 386,arch,mips,mipsle,riscv64
 for dist in $(go tool dist list); do
   echo $dist
