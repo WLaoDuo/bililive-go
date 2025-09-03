@@ -337,12 +337,18 @@ func get_M3u8(modelId string, daili string) (string, error) {
 		return "", ErrOffline
 	}
 	if resp.StatusCode == 200 {
+		fmt.Println("getM3u8结果", body)
+		pkeyRe := regexp.MustCompile(`EXT-X-MOUFLON:PSCH:([\w]+):([\w]+)`)
+		psch := pkeyRe.FindStringSubmatch(body)[1]
+		pkey := pkeyRe.FindStringSubmatch(body)[2]
+		// fmt.Println(psch, pkey)
 		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=lowLatency)`)
 		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=standard)`) //等价于\?playlistType=standard
 		data, err_findm3u8 := regexM3U8(body, 0)
 		if err_findm3u8 != nil {
 			return "", err_findm3u8
 		}
+		data = data + "&psch=" + psch + "&pkey=" + pkey
 		fmt.Println("结果=", data)
 		return data, nil
 
@@ -454,6 +460,7 @@ func test_m3u8(urlinput string, daili string) (bool, error) {
 			}
 			return false, ErrFalse
 		}
+		// fmt.Println(resp.StatusCode)
 		if resp.StatusCode == 200 {
 			_ = body
 			return true, nil
