@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"flag"
 	"fmt"
@@ -14,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hr3lxphr6j/bililive-go/src/live"
 	"github.com/parnurzeal/gorequest"
@@ -337,7 +340,7 @@ func get_M3u8(modelId string, daili string) (string, error) {
 		return "", ErrOffline
 	}
 	if resp.StatusCode == 200 {
-		fmt.Println("getM3u8结果", body)
+		// fmt.Println("getM3u8结果", body)
 		pkeyRe := regexp.MustCompile(`EXT-X-MOUFLON:PSCH:([\w]+):([\w]+)`)
 		psch := pkeyRe.FindStringSubmatch(body)[1]
 		pkey := pkeyRe.FindStringSubmatch(body)[2]
@@ -349,7 +352,7 @@ func get_M3u8(modelId string, daili string) (string, error) {
 			return "", err_findm3u8
 		}
 		data = data + "&psch=" + psch + "&pkey=" + pkey
-		fmt.Println("结果=", data)
+		// fmt.Println("getM3u8结果=", data)
 		return data, nil
 
 		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/[\w\/-]+.m3u8)`) //https://media-hls.doppiocdn.com/b-hls-10/82030055/82030055_720p60.m3u8更新
@@ -531,6 +534,117 @@ type Live struct {
 	m3u8Url  string
 }
 
+type Decrypter struct {
+	stripchatKey string
+	hashCache    map[string][]byte
+	session      *http.Client
+}
+
+func NewDecrypter(stripchatKey string) *Decrypter {
+	return &Decrypter{
+		stripchatKey: stripchatKey,
+		hashCache:    make(map[string][]byte),
+	}
+}
+
+// ProcessM3U8ContentV2 处理M3U8内容，解密其中的加密文件名
+func (d *Decrypter) ProcessM3U8ContentV2(m3u8Content string) string {
+	lines := strings.Split(strings.TrimSpace(m3u8Content), "\n")
+	for i := 0; i < len(lines)-1; i++ {
+		line := lines[i]
+		if strings.HasPrefix(line, "#EXT-X-MOUFLON:FILE:") && strings.Contains(lines[i+1], "media.mp4") {
+			// 提取加密数据
+			parts := strings.SplitN(line, ":", 3)
+			if len(parts) < 3 {
+				continue
+			}
+			encryptedData := strings.TrimSpace(parts[2])
+
+			// 尝试使用主密钥解密
+			decryptedData, err := d.Decrypt(encryptedData, d.stripchatKey)
+			if err != nil {
+				// 主密钥失败，尝试备用密钥
+				decryptedData, err = d.Decrypt(encryptedData, "Zokee2OhPh9kugh4")
+				if err != nil {
+					fmt.Printf("解密失败: %v\n", err)
+					decryptedData = ""
+				}
+			}
+
+			// 替换media.mp4为解密后的文件名
+			lines[i+1] = strings.ReplaceAll(lines[i+1], "media.mp4", decryptedData)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// Decrypt Base64编码的异或解密算法
+func (d *Decrypter) Decrypt(encryptedB64, key string) (string, error) {
+	// 修复Base64填充 - 确保与Python版本完全一致
+	// Python 版本: padding = len(encrypted_b64) % 4
+	padding := len(encryptedB64) % 4
+	if padding > 0 {
+		// Python 版本: encrypted_b64 += '=' * (4 - padding)
+		encryptedB64 += strings.Repeat("=", 4-padding)
+	}
+
+	// 计算哈希 - 确保与Python版本一致
+	hashBytes, err := d.computeHashBytes(key)
+	if err != nil {
+		return "", fmt.Errorf("计算哈希失败: %w", err)
+	}
+
+	// Base64解码 - 使用与Python相同的解码方式
+	// Python 版本: base64.b64decode(encrypted_b64)
+	encryptedData, err := base64.StdEncoding.DecodeString(encryptedB64)
+	if err != nil {
+		return "", fmt.Errorf("Base64解码失败: %w", err)
+	}
+
+	// 异或解密 - 核心解密算法
+	// 使用与Python完全相同的逻辑
+	// Python 版本: decrypted_bytes = bytearray()
+	decryptedBytes := make([]byte, 0, len(encryptedData))
+
+	for i, cipherByte := range encryptedData {
+		// 循环使用哈希字节作为密钥
+		// Python 版本: key_byte = hash_bytes[i % len(hash_bytes)]
+		keyByte := hashBytes[i%len(hashBytes)]
+
+		// 执行异或操作
+		// Python 版本: decrypted_bytes.append(cipher_byte ^ key_byte)
+		decryptedBytes = append(decryptedBytes, cipherByte^keyByte)
+	}
+
+	// 将解密后的字节转换为UTF-8字符串
+	// Python 版本: decrypted_bytes.decode('utf-8')
+	// 添加UTF-8有效性检查
+	if !utf8.Valid(decryptedBytes) {
+		// 打印解密后的字节用于调试
+		// fmt.Printf("解密后的字节: %v\n", decryptedBytes)
+		return "", fmt.Errorf("解密结果不是有效的UTF-8编码")
+	}
+
+	return string(decryptedBytes), nil
+}
+
+// computeHashBytes 计算SHA-256哈希值
+func (d *Decrypter) computeHashBytes(key string) ([]byte, error) {
+	// 检查缓存
+	if cached, exists := d.hashCache[key]; exists {
+		return cached, nil
+	}
+
+	// 计算新哈希 - 确保与Python版本一致
+	// Python 版本: hashlib.sha256(key.encode('utf-8')).digest()
+	hasher := sha256.New()
+	hasher.Write([]byte(key)) // 默认使用UTF-8编码
+	hash := hasher.Sum(nil)
+
+	// 缓存结果
+	d.hashCache[key] = hash
+	return hash, nil
+}
 func main() {
 	var name = flag.String("u", "Sakura_Anne", "主播名字")
 	var daili = flag.String("p", "http://127.0.0.1:7890", "代理")
@@ -543,17 +657,29 @@ func main() {
 	// m3u8 := get_M3u8(get_modelId("8-Monica"))
 	fmt.Println("input=", *name)
 	modelID, err_getid := get_modelId(*name, *daili)
-	m3u8, err_getm3u8 := get_M3u8(modelID, *daili)
-	result, err_test := test_m3u8(m3u8, *daili)
+	m3u81, err_getm3u8 := get_M3u8(modelID, *daili)
+	// fmt.Println(m3u81)
+	result, err_test := test_m3u8(m3u81, *daili)
+	if result == true {
+		_, m3u8_encrypted, err_getm3u82 := OptimizedGet(m3u81, *daili)
+		if err_getm3u82 != nil {
+			fmt.Println(err_getm3u82)
+		}
+		fmt.Println("被加密的", m3u81, "内容\n", m3u8_encrypted)
 
-	test := Live{model_ID: modelID, m3u8Url: m3u8}
+		decrypter := NewDecrypter("Quean4cai9boJa5a")
+		m3u8_decode := decrypter.ProcessM3U8ContentV2(m3u8_encrypted)
+		fmt.Println("解密结果:", m3u8_decode)
+	}
+
+	test := Live{model_ID: modelID, m3u8Url: m3u81}
 	fmt.Println("\ngetinfo调用的getm3u8结果:")
 	fmt.Println(GetInfo(&test, *name, *daili))
 
 	if modelID != "" {
 		if err_getm3u8 == nil && err_test == nil && err_getid == nil {
-			fmt.Println("m3u8=", m3u8, "测试结果：", result)
-			fmt.Println("ffmpeg.exe -http_proxy ", *daili, " -copyts -progress - -y -i ", m3u8, " -c copy -rtbufsize ", "./ceshi_copyts.mkv")
+			fmt.Println("m3u8=", m3u81, "测试结果：", result)
+			fmt.Println("ffmpeg.exe -http_proxy ", *daili, " -copyts -progress - -y -i ", m3u81, " -c copy -rtbufsize ", "./ceshi_copyts.mkv")
 		}
 	}
 	if err_getid != nil || err_getm3u8 != nil || err_test != nil {

@@ -91,12 +91,6 @@ class Spider():
         result['limit'] = limit
         result['total'] = total
         return result
-    
-    def decode_key_compact(self):
-        base64_str = "NTEgNzUgNjUgNjEgNmUgMzQgNjMgNjEgNjkgMzkgNjIgNmYgNGEgNjEgMzUgNjE="
-        decoded = base64.b64decode(base64_str).decode('utf-8')
-        key_bytes = bytes(int(hex_str, 16) for hex_str in decoded.split(" "))
-        return key_bytes.decode('utf-8')
 
     def detailContent(self, array):
         username = array[0]
@@ -207,7 +201,17 @@ class Spider():
             return country_code
         flag_emoji = ''.join([chr(ord(c.upper()) - ord('A') + 0x1F1E6) for c in country_code])
         return flag_emoji
-    
+
+    def decode_key_compact(self):
+        base64_str = "NTEgNzUgNjUgNjEgNmUgMzQgNjMgNjEgNjkgMzkgNjIgNmYgNGEgNjEgMzUgNjE="
+        decoded = base64.b64decode(base64_str).decode('utf-8')
+        print("decoded_key=",decoded)
+        key_bytes = bytes(int(hex_str, 16) for hex_str in decoded.split(" "))
+        print("key_bytes=",key_bytes)
+        uint8_array = [int(hex_str, 16) for hex_str in decoded.split(" ")]
+        print("Uint8Array=", uint8_array)
+        return key_bytes.decode('utf-8')
+
     def process_m3u8_content_v2(self, m3u8_content):
         """
         处理M3U8内容，解密其中的加密文件名
@@ -222,8 +226,10 @@ class Spider():
         for i, line in enumerate(lines):
             if (line.startswith('#EXT-X-MOUFLON:FILE:') and 'media.mp4' in lines[i + 1]):
                 encrypted_data = line.split(':', 2)[2].strip()
+                # print("encrypted_data="+ encrypted_data)
                 try:
                     decrypted_data = self.decrypt(encrypted_data, self.stripchat_key)
+                    # print("key:",self.stripchat_key)
                 except Exception as e:
                     decrypted_data = self.decrypt(encrypted_data, "Zokee2OhPh9kugh4") #Zokee2OhPh9kugh4:Quean4cai9boJa5a
                 lines[i + 1] = lines[i + 1].replace('media.mp4', decrypted_data)
@@ -248,11 +254,13 @@ class Spider():
         """
         # 修复Base64填充
         padding = len(encrypted_b64) % 4
+        # print("padding=",padding)
         if padding:
             encrypted_b64 += '=' * (4 - padding)
         # print("encrypted_b64:",encrypted_b64)
         # 计算哈希并解密
         hash_bytes = self.compute_hashbytes(key)
+        # print("hash_bytes=",hash_bytes)
         encrypted_data = base64.b64decode(encrypted_b64)
         # print("encrypted_data:",encrypted_data)
 
@@ -288,6 +296,10 @@ class Spider():
             sha256.update(key.encode('utf-8'))
             # 存储计算得到的哈希摘要（32字节）
             self._hash_cache[key] = sha256.digest()
+
+            for byte in self._hash_cache[key]:
+                print(int(byte), end=' ')  # 转换为8位二进制字符串并打印
+            print("\n")
         return self._hash_cache[key]
 
     def create_session_with_retry(self, retries=3, backoff_factor=0.3):
@@ -302,7 +314,15 @@ class Spider():
         self.session.mount("https://", adapter)
 
 test=Spider()
-filepath="D:\\study\\daima\\bililive-go\\194456228_160p(1).m3u8"
+filepath="d:/xiazai/194456228_480p(1).m3u8"
 with open(filepath, 'r', encoding='utf-8') as f:
     data = f.read()
-print(test.process_m3u8_content_v2(data))
+test.process_m3u8_content_v2(data)
+
+nM = "".join(chr(x) for x in [8, 44, 150, 143, 119, 94, 73, 180, 141, 85, 164, 41, 236, 217, 137, 213])
+r = "NTEgNzUgNjUgNjEgNmUgMzQgNjMgNjEgNjkgMzkgNjIgNmYgNGEgNjEgMzUgNjE="  # 替换为实际的 Base64 字符串
+# Base64 解码
+i = base64.b64decode(r)
+# 将字节数组转换为字符串
+i_string = i.decode('utf-8')
+print("i 的字符串形式:", i_string)
