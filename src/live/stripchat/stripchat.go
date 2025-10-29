@@ -326,23 +326,8 @@ func get_M3u8(modelId string, daili string, flag int) (string, error) {
 		return "", ErrNullID
 	}
 	// url := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=lowLatency"
-	urlinput := "https://edge-hls.doppiocdn.net/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=standard"
-	// url := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + ".m3u8"
-	//https://edge-hls.doppiocdn.com/hls/82030055/master/82030055_auto.m3u8
-	//https://media-hls.doppiocdn.com/b-hls-20/82030055/82030055.m3u8
-	//https://edge-hls.doppiocdn.com/hls/82030055/master/82030055.m3u8
-	// request := gorequest.New()
-	// if daili != "" {
-	// 	request = request.Proxy(daili) //代理
-	// }
-	// request.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
-	// request.Set("Accept-Language", "en-US,en;q=0.5")
-	// request.Set("Accept-Encoding", "gzip, deflate")
-	// request.Set("Upgrade-Insecure-Requests", "1")
-	// request.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0 Herring/91.1.1890.10")
-	// request.Set("Connection", "close")
+	urlinput := "https://edge-hls.doppiocdn.net/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?psch=v1&pkey=Thoohie4ieRaGaeb&playlistType=standard" //明文
 
-	// resp, body, errs := request.Get(urlinput).End()
 	resp, body, errs := OptimizedGet(urlinput, daili)
 	if errs != nil {
 		for _, err := range errs {
