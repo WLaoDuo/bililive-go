@@ -368,7 +368,9 @@ func regexM3U8(data string, flag int) (string, error) { //l.Options.Quality
 	}
 	nameRe := regexp.MustCompile(`NAME="([\w]+)"`)
 	urlRe := regexp.MustCompile(`(https?:\/\/[^\s]+?\.m3u8(?:\?[^\s]+)?)`)
+	resolutionRe := regexp.MustCompile(`RESOLUTION=([\w]+)`)
 
+	resolutionMatches := resolutionRe.FindAllStringSubmatch(data, -1)
 	nameMatches := nameRe.FindAllStringSubmatch(data, -1)
 	urlMatches := urlRe.FindAllStringSubmatch(data, -1)
 
@@ -378,9 +380,9 @@ func regexM3U8(data string, flag int) (string, error) { //l.Options.Quality
 	}
 	if len(urlMatches) > 1 {
 		result := make(map[string]string) //字典
-		for i := 0; i < len(nameMatches); i++ {
-			if len(nameMatches[i]) > 1 && len(urlMatches[i]) > 1 {
-				name := nameMatches[i][1]
+		for i := 0; i < len(resolutionMatches); i++ {
+			if len(resolutionMatches[i]) > 1 && len(urlMatches[i]) > 1 {
+				name := resolutionMatches[i][1]
 				url := urlMatches[i][1]
 				result[name] = url
 			}
@@ -389,7 +391,7 @@ func regexM3U8(data string, flag int) (string, error) { //l.Options.Quality
 
 		if flag == 0 { //储存优先480p
 			for k, v := range result {
-				if strings.Contains(k, "480p") {
+				if strings.Contains(k, "480") {
 					return v, nil
 				}
 			}
@@ -397,7 +399,7 @@ func regexM3U8(data string, flag int) (string, error) { //l.Options.Quality
 		}
 		if flag == 1 { //720p优先
 			for k, v := range result {
-				if strings.Contains(k, "720p") {
+				if strings.Contains(k, "720") {
 					return v, nil
 				}
 			}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -113,7 +114,7 @@ func get_modelId(modleName string, daili string) (string, error) {
 
 // 全局客户端管理器
 type RequestManager struct {
-	clients map[string]*gorequest.SuperAgent
+	clients map[string]*http.Client
 	mutex   sync.RWMutex
 }
 
@@ -126,127 +127,152 @@ var (
 func getManager() *RequestManager {
 	once.Do(func() {
 		manager = &RequestManager{
-			clients: make(map[string]*gorequest.SuperAgent),
+			clients: make(map[string]*http.Client),
 		}
 	})
 	return manager
 }
 
-// 创建优化的 gorequest 实例
-func createOptimizedRequest(daili string) *gorequest.SuperAgent {
-	request := gorequest.New()
-
-	// 配置连接池
+// 创建优化的HTTP客户端
+func (hm *RequestManager) getHTTPManager(proxyURL string) *http.Client {
+	// 创建自定义Transport，优化连接池参数
 	transport := &http.Transport{
-		MaxIdleConns:        200,              // 全局最大空闲连接
-		MaxIdleConnsPerHost: 100,              // 单域名最大空闲连接
-		MaxConnsPerHost:     0,                //单域名最大连接，0不限制
-		IdleConnTimeout:     90 * time.Second, // 空闲连接超时
+		// 连接池配置
+		MaxIdleConns:        600,              // 全局最大空闲连接
+		MaxIdleConnsPerHost: 200,              // 每个host的最大空闲连接数
+		MaxConnsPerHost:     0,                // 单域名最大连接，0不限制
+		IdleConnTimeout:     30 * time.Second, // 空闲连接超时时间
 
+		// 连接超时配置
 		DialContext: (&net.Dialer{
-			Timeout:   30 * time.Second,
-			KeepAlive: 30 * time.Second,
+			Timeout:   20 * time.Second, // 连接超时
+			KeepAlive: 30 * time.Second, // Keep-Alive周期
 		}).DialContext,
 
-		TLSHandshakeTimeout: 10 * time.Second,
+		// 其他优化配置
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+
+		// TLS配置
 		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: false,
+			InsecureSkipVerify: true, // 忽略tls错误
 		},
 
-		DisableKeepAlives:     false,
-		ResponseHeaderTimeout: 30 * time.Second,
+		// 禁用HTTP/2（可选，某些情况下HTTP/1.1性能更好）
+		// ForceAttemptHTTP2: false,
 	}
 
-	// // 设置代理
-	// if daili != "" {
-	// 	if proxyUrl, err := url.Parse(daili); err == nil {
-	// 		transport.Proxy = http.ProxyURL(proxyUrl)
-	// 	}
-	// }
-
-	request.Transport = transport
-
-	if daili != "" { // 设置代理
-		request = request.Proxy(daili)
+	// 如果有代理配置
+	if proxyURL != "" {
+		if proxyURLParsed, err := url.Parse(proxyURL); err == nil {
+			transport.Proxy = http.ProxyURL(proxyURLParsed)
+		}
 	}
-	request.Timeout(60 * time.Second)
 
-	return request
+	return &http.Client{
+		Transport: transport,
+		Timeout:   30 * time.Second, // 整体请求超时
+		// 不自动跟随重定向，根据需要调整
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("stopped after 10 redirects")
+			}
+			return nil
+		},
+	}
 }
 
-// 获取客户端实例（自动初始化和复用）
-func (rm *RequestManager) getClient(daili string) *gorequest.SuperAgent {
-	rm.mutex.RLock()
-	client, exists := rm.clients[daili]
-	rm.mutex.RUnlock()
+// 获取或创建HTTP客户端（按代理分组复用）
+func (hm *RequestManager) getClient(proxyURL string) *http.Client {
+	// 使用代理URL作为key，没有代理则使用"default"
+	key := proxyURL
+	if key == "" {
+		key = "default"
+	}
+
+	// 先尝试读取
+	hm.mutex.RLock()
+	client, exists := hm.clients[key]
+	hm.mutex.RUnlock()
 
 	if exists {
 		return client
 	}
 
-	rm.mutex.Lock()
-	defer rm.mutex.Unlock()
+	// 需要创建新客户端，加写锁
+	hm.mutex.Lock()
+	defer hm.mutex.Unlock()
 
 	// 双重检查锁定
-	if client, exists := rm.clients[daili]; exists {
+	if client, exists := hm.clients[key]; exists {
 		return client
 	}
 
-	client = createOptimizedRequest(daili)
-	rm.clients[daili] = client
+	// 创建新客户端
+	client = hm.getHTTPManager(proxyURL)
+	hm.clients[key] = client
+
 	return client
 }
 
-// 主要的请求函数 - 直接替换你的原代码
+// 主要的请求函数 - 高性能实现
 func OptimizedGet(urlinput, daili string) (*http.Response, string, []error) {
+	var errs []error
+
+	// 获取复用的HTTP客户端
 	client := getManager().getClient(daili)
 
-	return client.Get(urlinput).
-		Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8").
-		Set("Accept-Language", "en-US,en;q=0.5").
-		// Set("Accept-Encoding", "gzip, deflate"). // 压缩 无法自动解压，出现乱码
-		Set("Accept-Encoding", "identity"). // 不接受压缩
-		Set("Upgrade-Insecure-Requests", "1").
-		Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0 Herring/91.1.1890.10").
-		Set("Connection", "keep-alive").
-		End()
-}
-
-// POST 请求封装
-func OptimizedPost(urlinput, daili string, data interface{}) (*http.Response, string, []error) {
-	client := getManager().getClient(daili)
-
-	return client.Post(urlinput).
-		Send(data).
-		Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8").
-		Set("Accept-Language", "en-US,en;q=0.5").
-		// Set("Accept-Encoding", "gzip, deflate"). // 压缩支持
-		Set("Accept-Encoding", "identity"). // 不接受压缩
-		Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0 Herring/91.1.1890.10").
-		Set("Connection", "keep-alive").
-		End()
-}
-
-// 带自定义头部的请求函数
-func OptimizedGetWithHeaders(urlinput, daili string, headers map[string]string) (*http.Response, string, []error) {
-	client := getManager().getClient(daili)
-
-	req := client.Get(urlinput).
-		Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8").
-		Set("Accept-Language", "en-US,en;q=0.5").
-		// Set("Accept-Encoding", "gzip, deflate"). // 压缩支持
-		Set("Accept-Encoding", "identity"). // 不接受压缩
-		Set("Upgrade-Insecure-Requests", "1").
-		Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0 Herring/91.1.1890.10").
-		Set("Connection", "keep-alive")
-
-	// 添加自定义头部
-	for key, value := range headers {
-		req = req.Set(key, value)
+	// 创建请求
+	req, err := http.NewRequest("GET", urlinput, nil)
+	if err != nil {
+		return nil, "", []error{fmt.Errorf("创建请求失败: %w", err)}
 	}
 
-	return req.End()
+	// 设置请求头（模拟浏览器）
+	req.Header.Set("Accept", "*/*")
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2")
+	req.Header.Set("Accept-Encoding", "identity") // 不接受压缩
+	// req.Header.Set("Upgrade-Insecure-Requests", "1")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0")
+	req.Header.Set("Connection", "keep-alive")
+
+	// 执行请求
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, "", []error{fmt.Errorf("请求执行失败: %w", err)}
+	}
+
+	// 读取响应体
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		resp.Body.Close()
+		return nil, "", []error{fmt.Errorf("读取响应体失败: %w", err)}
+	}
+
+	// 重要：关闭原响应体，但我们需要返回响应对象
+	resp.Body.Close()
+
+	// 创建新的响应体，以便调用者可以正常使用Response对象
+	resp.Body = io.NopCloser(strings.NewReader(string(body)))
+
+	return resp, string(body), errs
 }
+
+// return client.Get(urlinput).
+// 	Set("Accept", "*/*").
+// 	Set("Accept-Language", "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2").
+// 	// Set("Accept-Encoding", "gzip, deflate"). // 压缩 无法自动解压，出现乱码
+// 	Set("Accept-Encoding", "identity"). // 不接受压缩
+// 	Set("Origin", "https://zh.stripchat.com").
+// 	Set("Referer", "https://zh.stripchat.com/").
+// 	Set("Priority", "u=4").
+// 	Set("Sec-Fetch-Dest", "empty").
+// 	Set("Sec-Fetch-Mode", "cors").
+// 	Set("Sec-Fetch-Site", "cross-site").
+// 	Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0").
+// 	Set("Connection", "keep-alive").
+// 	End()
 
 // 带重试机制的请求
 func OptimizedGetWithRetry(urlinput, daili string, maxRetries int) (*http.Response, string, []error) {
@@ -271,60 +297,16 @@ func OptimizedGetWithRetry(urlinput, daili string, maxRetries int) (*http.Respon
 	return resp, body, errs
 }
 
-// 并发控制版本
-type ConcurrentRequester struct {
-	semaphore chan struct{}
-}
-
-func NewConcurrentRequester(maxConcurrency int) *ConcurrentRequester {
-	return &ConcurrentRequester{
-		semaphore: make(chan struct{}, maxConcurrency),
-	}
-}
-
-func (cr *ConcurrentRequester) Get(urlinput, daili string) (*http.Response, string, []error) {
-	cr.semaphore <- struct{}{}
-	defer func() { <-cr.semaphore }()
-
-	return OptimizedGet(urlinput, daili)
-}
-
-// 清理函数（可选，通常不需要调用）
-func CleanupClients() {
-	manager = &RequestManager{
-		clients: make(map[string]*gorequest.SuperAgent),
-	}
-}
 func get_M3u8(modelId string, daili string) (string, error) {
 	if modelId == "" { // || modelId == "false" || modelId == "OffLine" || modelId == "url.Error" {
 		return "", ErrNullID
 	}
-	// url := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=lowLatency"
-	// url := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + ".m3u8"
-	//https://edge-hls.doppiocdn.com/hls/82030055/master/82030055_auto.m3u8
-	//https://media-hls.doppiocdn.com/b-hls-20/82030055/82030055.m3u8
-	//https://edge-hls.doppiocdn.com/hls/82030055/master/82030055.m3u8
-	urlinput := "https://edge-hls.doppiocdn.net/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=standard"
+	// urlinput := "https://edge-hls.doppiocdn.net/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=standard" //EOF错误
+	// urlinput := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=standard" //EOF错误
+	// urlinput := "https://edge-hls.doppiocdn.org/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?playlistType=standard" //ok
+	urlinput := "https://edge-hls.doppiocdn.com/hls/" + modelId + "/master/" + modelId + "_auto.m3u8?psch=v1&pkey=Thoohie4ieRaGaeb&playlistType=standard" //明文
+	// https://edge-hls.doppiocdn.net/hls/107278959/master/107278959_auto.m3u8?psch=v1&pkey=Zokee2OhPh9kugh4&playlistType=standard 可解密
 
-	// request := gorequest.New().Timeout(1 * time.Second)
-	// if daili != "" {
-	// 	request = request.Proxy(daili) //代理
-	// }
-	// request.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
-	// request.Set("Accept-Language", "en-US,en;q=0.5")
-	// request.Set("Accept-Encoding", "gzip, deflate")
-	// request.Set("Upgrade-Insecure-Requests", "1")
-	// request.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0 Herring/91.1.1890.10")
-	// request.Set("Connection", "close")
-	// request.Client.Transport = &http.Transport{
-	// 	// ForceAttemptHTTP2: false, // 强制使用 HTTP/1.1
-	// 	// TLSClientConfig: &tls.Config{
-	// 	// MinVersion:         tls.VersionTLS12, // 强制使用 TLS 1.2
-	// 	// InsecureSkipVerify: true,             // 仅用于测试，生产环境不要使用
-	// 	// },
-	// 	DisableKeepAlives: true, // 禁用 Keep-Alive
-	// }
-	// resp, body, errs := request.Get(urlinput).End()
 	resp, body, errs := OptimizedGet(urlinput, daili)
 	if errs != nil {
 		fmt.Println("错误的结果", resp, body)
@@ -340,32 +322,18 @@ func get_M3u8(modelId string, daili string) (string, error) {
 		return "", ErrOffline
 	}
 	if resp.StatusCode == 200 {
-		// fmt.Println("getM3u8结果", body)
+		fmt.Println("getM3u8结果", body)
 		pkeyRe := regexp.MustCompile(`EXT-X-MOUFLON:PSCH:([\w]+):([\w]+)`)
 		psch := pkeyRe.FindStringSubmatch(body)[1]
 		pkey := pkeyRe.FindStringSubmatch(body)[2]
-		// fmt.Println(psch, pkey)
-		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=lowLatency)`)
-		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/hls\/[\d]+\/[\d\_p]+\.m3u8\?playlistType=standard)`) //等价于\?playlistType=standard
-		data, err_findm3u8 := regexM3U8(body, 0)
+		fmt.Println(psch, pkey)
+		data, err_findm3u8 := regexM3U8(body, 1)
 		if err_findm3u8 != nil {
 			return "", err_findm3u8
 		}
-		data = data + "&psch=" + psch + "&pkey=" + pkey
+		// data = data + "&psch=" + psch + "&pkey=" + pkey
 		// fmt.Println("getM3u8结果=", data)
 		return data, nil
-
-		// re := regexp.MustCompile(`(https:\/\/[\w\-\.]+\/[\w\/-]+.m3u8)`) //https://media-hls.doppiocdn.com/b-hls-10/82030055/82030055_720p60.m3u8更新
-		// matches := re.FindAllString(body, -1)                            // -1表示匹配所有结果
-		// if len(matches) > 1 {
-		// 	secondMatch := matches[1]
-		// 	return secondMatch, nil
-		// }
-		// if len(matches) == 1 {
-		// 	return matches[0], nil
-		// } else {
-		// 	return "", errors.New(body + "m3u8正则未匹配")
-		// }
 	} else {
 		return "", ErrFalse
 	}
@@ -376,25 +344,29 @@ func regexM3U8(data string, quality int) (string, error) { //l.Options.Quality
 		quality = 0
 	}
 	nameRe := regexp.MustCompile(`NAME="([\w]+)"`)
+	resolutionRe := regexp.MustCompile(`RESOLUTION=([\w]+)`)
 	urlRe := regexp.MustCompile(`(https?:\/\/[^\s]+?\.m3u8(?:\?[^\s]+)?)`)
 
-	// data = `
-	// #EXTM3U
-	// #EXT-X-VERSION:6
-	// #EXT-X-MOUFLON:PSCH:v1:Zokee2OhPh9kugh4
-	// #EXT-X-STREAM-INF:BANDWIDTH=3911987,CODECS="avc1.4d6020,mp4a.40.2",RESOLUTION=1280x720,FRAME-RATE=60.000,CLOSED-CAPTIONS=NONE,NAME="720p60"
-	// https://media-hls.doppiocdn.net/b-hls-16/91895007/91895007_720p60.m3u8?playlistType=lowLatency
-	// #EXT-X-STREAM-INF:BANDWIDTH=2600857,CODECS="avc1.4d601f,mp4a.40.2",RESOLUTION=1280x720,FRAME-RATE=30.000,CLOSED-CAPTIONS=NONE,NAME="720p"
-	// https://media-hls.doppiocdn.net/b-hls-16/91895007/91895007_720p.m3u8?playlistType=lowLatency
-	// #EXT-X-STREAM-INF:BANDWIDTH=1445171,CODECS="avc1.4d601f,mp4a.40.2",RESOLUTION=854x480,FRAME-RATE=30.000,CLOSED-CAPTIONS=NONE,NAME="480p"
-	// https://media-hls.doppiocdn.net/b-hls-16/91895007/91895007_480p.m3u8?playlistType=lowLatency
-	// #EXT-X-STREAM-INF:BANDWIDTH=699494,CODECS="avc1.4d6015,mp4a.40.2",RESOLUTION=426x240,FRAME-RATE=30.000,CLOSED-CAPTIONS=NONE,NAME="240p"
-	// https://media-hls.doppiocdn.net/b-hls-16/91895007/91895007_240p.m3u8?playlistType=lowLatency
-	// #EXT-X-STREAM-INF:BANDWIDTH=341299,CODECS="avc1.4d600c,mp4a.40.2",RESOLUTION=284x160,FRAME-RATE=30.000,CLOSED-CAPTIONS=NONE,NAME="160p"
-	// https://media-hls.doppiocdn.net/b-hls-16/91895007/91895007_160p.m3u8?playlistType=lowLatency
-	// `
+	/*
+		data = `
+		#EXTM3U
+		#EXT-X-VERSION:6
+		#EXT-X-MOUFLON:PSCH:v1:Zokee2OhPh9kugh4
+		#EXT-X-STREAM-INF:BANDWIDTH=5310976,CODECS="avc1.4d0028,mp4a.40.2",RESOLUTION=1920x1080,FRAME-RATE=30.000,CLOSED-CAPTIONS=NONE,NAME="1080p"
+		https://b-hls-23.doppiocdn.live/hls/82030055/82030055_1080p.m3u8?playlistType=standard
+		#EXT-X-STREAM-INF:BANDWIDTH=2598604,CODECS="avc1.4d001f,mp4a.40.2",RESOLUTION=1280x720,FRAME-RATE=30.000,CLOSED-CAPTIONS=NONE,NAME="720p"
+		https://b-hls-23.doppiocdn.live/hls/82030055/82030055_720p.m3u8?playlistType=standard
+		#EXT-X-STREAM-INF:BANDWIDTH=1469952,CODECS="avc1.4d001f,mp4a.40.2",RESOLUTION=854x480,FRAME-RATE=30.000,CLOSED-CAPTIONS=NONE,NAME="480p"
+		https://b-hls-23.doppiocdn.live/hls/82030055/82030055_480p.m3u8?playlistType=standard
+		#EXT-X-STREAM-INF:BANDWIDTH=719769,CODECS="avc1.4d0015,mp4a.40.2",RESOLUTION=426x240,FRAME-RATE=30.000,CLOSED-CAPTIONS=NONE,NAME="240p"
+		https://b-hls-23.doppiocdn.live/hls/82030055/82030055_240p.m3u8?playlistType=standard
+		#EXT-X-STREAM-INF:BANDWIDTH=349184,CODECS="avc1.4d400c,mp4a.40.2",RESOLUTION=284x160,FRAME-RATE=30.000,CLOSED-CAPTIONS=NONE,NAME="160p"
+		https://b-hls-23.doppiocdn.live/hls/82030055/82030055_160p.m3u8?playlistType=standard
+		`
+	*/
 	nameMatches := nameRe.FindAllStringSubmatch(data, -1)
 	urlMatches := urlRe.FindAllStringSubmatch(data, -1)
+	resolutionMatches := resolutionRe.FindAllStringSubmatch(data, -1)
 
 	// 检查匹配结果
 	if len(nameMatches) == 0 || len(urlMatches) == 0 {
@@ -402,9 +374,9 @@ func regexM3U8(data string, quality int) (string, error) { //l.Options.Quality
 	}
 	if len(urlMatches) > 1 {
 		result := make(map[string]string) //字典
-		for i := 0; i < len(nameMatches); i++ {
-			if len(nameMatches[i]) > 1 && len(urlMatches[i]) > 1 {
-				name := nameMatches[i][1]
+		for i := 0; i < len(resolutionMatches); i++ {
+			if len(resolutionMatches[i]) > 1 && len(urlMatches[i]) > 1 {
+				name := resolutionMatches[i][1]
 				url := urlMatches[i][1]
 				result[name] = url
 			}
@@ -413,7 +385,7 @@ func regexM3U8(data string, quality int) (string, error) { //l.Options.Quality
 
 		if quality == 0 { //储存优先480p
 			for k, v := range result {
-				if strings.Contains(k, "480p") {
+				if strings.Contains(k, "480") {
 					return v, nil
 				}
 			}
@@ -421,7 +393,7 @@ func regexM3U8(data string, quality int) (string, error) { //l.Options.Quality
 		}
 		if quality == 1 { //720p优先
 			for k, v := range result {
-				if strings.Contains(k, "720p") {
+				if strings.Contains(k, "720") {
 					return v, nil
 				}
 			}
@@ -657,8 +629,9 @@ func main() {
 	// m3u8 := get_M3u8(get_modelId("8-Monica"))
 	fmt.Println("input=", *name)
 	modelID, err_getid := get_modelId(*name, *daili)
+	fmt.Println(*name, modelID)
 	m3u81, err_getm3u8 := get_M3u8(modelID, *daili)
-	// fmt.Println(m3u81)
+	fmt.Println(m3u81)
 	result, err_test := test_m3u8(m3u81, *daili)
 	if result == true {
 		_, m3u8_encrypted, err_getm3u82 := OptimizedGet(m3u81, *daili)
@@ -679,7 +652,7 @@ func main() {
 	if modelID != "" {
 		if err_getm3u8 == nil && err_test == nil && err_getid == nil {
 			fmt.Println("m3u8=", m3u81, "测试结果：", result)
-			fmt.Println("ffmpeg.exe -http_proxy ", *daili, " -copyts -progress - -y -i ", m3u81, " -c copy -rtbufsize ", "./ceshi_copyts.mkv")
+			fmt.Println("ffmpeg.exe -http_proxy ", *daili, " -copyts -progress - -y -i ", "'"+m3u81+"'", " -c copy -rtbufsize ", "./ceshi_copyts.mkv")
 		}
 	}
 	if err_getid != nil || err_getm3u8 != nil || err_test != nil {
